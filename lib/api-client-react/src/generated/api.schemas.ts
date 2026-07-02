@@ -25,6 +25,18 @@ export interface OriginVerifyRequest {
   useHttps?: boolean;
 }
 
+/**
+ * Best-effort classification. "likely_origin" means multiple independent signals agree; it is not proof of internal network topology, which cannot be fully confirmed from outside.
+ */
+export type OriginVerifyResultVerdict = typeof OriginVerifyResultVerdict[keyof typeof OriginVerifyResultVerdict];
+
+
+export const OriginVerifyResultVerdict = {
+  likely_origin: 'likely_origin',
+  possible_proxy: 'possible_proxy',
+  indeterminate: 'indeterminate',
+} as const;
+
 export interface OriginVerifyResult {
   hostname: string;
   ip: string;
@@ -37,6 +49,17 @@ export interface OriginVerifyResult {
   tlsCertSubject?: string | null;
   tlsCertIssuer?: string | null;
   bodyPreview?: string | null;
+  /** Header names found on the direct response that typically indicate an intermediary proxy/load-balancer hop (Via, X-Cache, X-Served-By, X-Forwarded-*, X-Real-IP) */
+  proxyHeadersDetected: string[];
+  /** HTTP status returned by the normal public hostname (via DNS/CDN) for comparison */
+  publicStatusCode?: number | null;
+  /** 0-1 trigram similarity between the direct-IP response body and the public hostname's response body */
+  publicBodySimilarity?: number | null;
+  /** 0-1 overlap ratio between the response header sets of the direct-IP response and the public hostname response */
+  publicHeaderOverlap?: number | null;
+  /** Best-effort classification. "likely_origin" means multiple independent signals agree; it is not proof of internal network topology, which cannot be fully confirmed from outside. */
+  verdict: OriginVerifyResultVerdict;
+  verdictReason?: string | null;
   error?: string | null;
 }
 

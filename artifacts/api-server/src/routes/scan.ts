@@ -5,7 +5,13 @@ import {
   VerifyOriginBody,
   VerifyOriginResponse,
 } from "@workspace/api-zod";
-import { scanTarget, verifyOrigin } from "../services/recon";
+import {
+  isPublicIpv4,
+  isSafeVerifyPort,
+  isValidHostnameForVerification,
+  scanTarget,
+  verifyOrigin,
+} from "../services/recon";
 
 const router: IRouter = Router();
 
@@ -35,9 +41,28 @@ router.post("/verify-origin", async (req, res) => {
     return;
   }
 
+  const { hostname, ip, port, useHttps } = parseResult.data;
+  const effectivePort = port ?? (useHttps === false ? 80 : 443);
+
+  if (!isValidHostnameForVerification(hostname)) {
+    res.status(400).json({ message: "Invalid hostname." });
+    return;
+  }
+  if (!isPublicIpv4(ip)) {
+    res.status(400).json({
+      message: "IP must be a public, routable IPv4 address. Private/internal/reserved ranges are not allowed.",
+    });
+    return;
+  }
+  if (!isSafeVerifyPort(effectivePort)) {
+    res.status(400).json({
+      message: "Port must be one of the allowed web ports (80, 443, 8080, 8443, 8000, 8888, 8081, 3000).",
+    });
+    return;
+  }
+
   try {
-    const { hostname, ip, port, useHttps } = parseResult.data;
-    const result = await verifyOrigin(hostname, ip, port, useHttps);
+    const result = await verifyOrigin(hostname, ip, effectivePort, useHttps ?? true);
     const data = VerifyOriginResponse.parse(result);
     res.json(data);
   } catch (err) {

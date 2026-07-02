@@ -300,33 +300,52 @@ function OriginIpCard({
 
         {verifyResult && (
           <div
-            className={`text-xs p-3 border flex flex-col gap-2 font-mono ${
-              verifyResult.reachable
+            className={`text-xs p-3 border flex flex-col gap-3 font-mono ${
+              verifyResult.verdict === "likely_origin"
                 ? "border-primary/50 bg-primary/5"
-                : "border-destructive/50 bg-destructive/5"
+                : verifyResult.verdict === "possible_proxy"
+                  ? "border-amber-500/50 bg-amber-500/5"
+                  : "border-border/50 bg-secondary/20"
             }`}
           >
             <div className="flex items-center gap-2">
-              {verifyResult.reachable ? (
+              {verifyResult.verdict === "likely_origin" ? (
                 <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0" />
+              ) : verifyResult.verdict === "possible_proxy" ? (
+                <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               ) : (
-                <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />
+                <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
               )}
-              <span className="font-bold">
-                {verifyResult.reachable
-                  ? `Origin reached directly — CDN bypassed`
-                  : "Origin did not respond directly"}
+              <span className="font-bold uppercase tracking-wide">
+                {verifyResult.verdict === "likely_origin"
+                  ? "Likely origin"
+                  : verifyResult.verdict === "possible_proxy"
+                    ? "Possible intermediary proxy"
+                    : "Indeterminate"}
               </span>
             </div>
 
+            {verifyResult.verdictReason && (
+              <div className="text-muted-foreground leading-relaxed normal-case">{verifyResult.verdictReason}</div>
+            )}
+
             {verifyResult.reachable && (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground border-t border-border/40 pt-2">
                 <span>Status: <span className="text-foreground">{verifyResult.statusCode} {verifyResult.statusText}</span></span>
+                {verifyResult.publicStatusCode != null && (
+                  <span>Public status: <span className="text-foreground">{verifyResult.publicStatusCode}</span></span>
+                )}
                 {verifyResult.responseTimeMs != null && (
                   <span>Latency: <span className="text-foreground">{verifyResult.responseTimeMs}ms</span></span>
                 )}
                 {verifyResult.server && (
-                  <span className="col-span-2">Server: <span className="text-foreground">{verifyResult.server}</span></span>
+                  <span>Server: <span className="text-foreground">{verifyResult.server}</span></span>
+                )}
+                {verifyResult.publicBodySimilarity != null && (
+                  <span>Body similarity: <span className="text-foreground">{Math.round(verifyResult.publicBodySimilarity * 100)}%</span></span>
+                )}
+                {verifyResult.publicHeaderOverlap != null && (
+                  <span>Header overlap: <span className="text-foreground">{Math.round(verifyResult.publicHeaderOverlap * 100)}%</span></span>
                 )}
                 {verifyResult.tlsCertMatchesHost != null && (
                   <span className="col-span-2">
@@ -334,6 +353,11 @@ function OriginIpCard({
                     <span className={verifyResult.tlsCertMatchesHost ? "text-primary" : "text-amber-500"}>
                       {verifyResult.tlsCertMatchesHost ? "Yes" : "No"}
                     </span>
+                  </span>
+                )}
+                {verifyResult.proxyHeadersDetected.length > 0 && (
+                  <span className="col-span-2">
+                    Proxy headers found: <span className="text-amber-500">{verifyResult.proxyHeadersDetected.join(", ")}</span>
                   </span>
                 )}
               </div>

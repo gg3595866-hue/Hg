@@ -154,6 +154,34 @@ components:
         bodyPreview:
           type: string
           nullable: true
+        proxyHeadersDetected:
+          type: array
+          items:
+            type: string
+          description: >
+            Header names found on the direct response that typically indicate an
+            intermediary proxy/load-balancer hop (Via, X-Cache, X-Served-By, X-Forwarded-*, X-Real-IP)
+        publicStatusCode:
+          type: integer
+          nullable: true
+          description: HTTP status returned by the normal public hostname (via DNS/CDN) for comparison
+        publicBodySimilarity:
+          type: number
+          nullable: true
+          description: 0-1 trigram similarity between the direct-IP response body and the public hostname's response body
+        publicHeaderOverlap:
+          type: number
+          nullable: true
+          description: 0-1 overlap ratio between the response header sets of the direct-IP response and the public hostname response
+        verdict:
+          type: string
+          enum: [likely_origin, possible_proxy, indeterminate]
+          description: >
+            Best-effort classification. "likely_origin" means multiple independent signals agree;
+            it is not proof of internal network topology, which cannot be fully confirmed from outside.
+        verdictReason:
+          type: string
+          nullable: true
         error:
           type: string
           nullable: true
@@ -161,6 +189,8 @@ components:
         - hostname
         - ip
         - reachable
+        - proxyHeadersDetected
+        - verdict
     ScanError:
       type: object
       properties:

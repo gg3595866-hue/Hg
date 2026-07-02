@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { OriginVerifyResultVerdict } from './originVerifyResultVerdict';
 
 export interface OriginVerifyResult {
   hostname: string;
@@ -18,5 +19,16 @@ export interface OriginVerifyResult {
   tlsCertSubject?: string | null;
   tlsCertIssuer?: string | null;
   bodyPreview?: string | null;
+  /** Header names found on the direct response that typically indicate an intermediary proxy/load-balancer hop (Via, X-Cache, X-Served-By, X-Forwarded-*, X-Real-IP) */
+  proxyHeadersDetected: string[];
+  /** HTTP status returned by the normal public hostname (via DNS/CDN) for comparison */
+  publicStatusCode?: number | null;
+  /** 0-1 trigram similarity between the direct-IP response body and the public hostname's response body */
+  publicBodySimilarity?: number | null;
+  /** 0-1 overlap ratio between the response header sets of the direct-IP response and the public hostname response */
+  publicHeaderOverlap?: number | null;
+  /** Best-effort classification. "likely_origin" means multiple independent signals agree; it is not proof of internal network topology, which cannot be fully confirmed from outside. */
+  verdict: OriginVerifyResultVerdict;
+  verdictReason?: string | null;
   error?: string | null;
 }

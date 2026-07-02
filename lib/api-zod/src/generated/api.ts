@@ -85,6 +85,12 @@ export const VerifyOriginResponse = zod.object({
   "tlsCertSubject": zod.string().nullish(),
   "tlsCertIssuer": zod.string().nullish(),
   "bodyPreview": zod.string().nullish(),
+  "proxyHeadersDetected": zod.array(zod.string()).describe('Header names found on the direct response that typically indicate an intermediary proxy\/load-balancer hop (Via, X-Cache, X-Served-By, X-Forwarded-\*, X-Real-IP)\n'),
+  "publicStatusCode": zod.number().nullish().describe('HTTP status returned by the normal public hostname (via DNS\/CDN) for comparison'),
+  "publicBodySimilarity": zod.number().nullish().describe('0-1 trigram similarity between the direct-IP response body and the public hostname\'s response body'),
+  "publicHeaderOverlap": zod.number().nullish().describe('0-1 overlap ratio between the response header sets of the direct-IP response and the public hostname response'),
+  "verdict": zod.enum(['likely_origin', 'possible_proxy', 'indeterminate']).describe('Best-effort classification. \"likely_origin\" means multiple independent signals agree; it is not proof of internal network topology, which cannot be fully confirmed from outside.\n'),
+  "verdictReason": zod.string().nullish(),
   "error": zod.string().nullish()
 })
 

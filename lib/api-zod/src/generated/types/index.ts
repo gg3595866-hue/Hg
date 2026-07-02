@@ -13,6 +13,7 @@ export * from './healthStatus';
 export * from './ipDetails';
 export * from './originVerifyRequest';
 export * from './originVerifyResult';
+export * from './originVerifyResultVerdict';
 export * from './scanError';
 export * from './scanRequest';
 export * from './scanResult';

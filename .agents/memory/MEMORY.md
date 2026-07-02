@@ -1,1 +1,2 @@
 - [Recon CDN detection fallback bug](recon-cdn-detection.md) — a "no signature match" fallback that defaults to `detected: true` silently mislabels every direct-origin host as CDN-protected.
+- [Origin verification SSRF guard + differential comparison](origin-verification-ssrf-and-differential-checks.md) — validate IP/port/hostname before dialing out; use multi-signal comparison, not one signal, for origin verdicts.

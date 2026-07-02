@@ -14,6 +14,129 @@ import { logger } from "../lib/logger";
 
 const NETWORK_TIMEOUT_MS = 6000;
 
+const ALLOWED_VERIFY_PORTS = new Set([80, 443, 8080, 8443, 8000, 8888, 8081, 3000]);
+
+const PROXY_INDICATOR_HEADERS = [
+  "via",
+  "x-cache",
+  "x-served-by",
+  "x-forwarded-for",
+  "x-forwarded-proto",
+  "x-forwarded-host",
+  "x-real-ip",
+  "x-amz-cf-id",
+  "cf-ray",
+];
+
+export function isPublicIpv4(ip: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip.trim());
+  if (!match) {
+    return false;
+  }
+  const octets = match.slice(1, 5).map(Number);
+  if (octets.some((n) => n < 0 || n > 255)) {
+    return false;
+  }
+  const [a, b] = octets;
+
+  if (a === 0) return false; // "this" network
+  if (a === 10) return false; // RFC1918
+  if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
+  if (a === 127) return false; // loopback
+  if (a === 169 && b === 254) return false; // link-local
+  if (a === 172 && b >= 16 && b <= 31) return false; // RFC1918
+  if (a === 192 && b === 0 && octets[2] === 0) return false; // IETF protocol assignments
+  if (a === 192 && b === 0 && octets[2] === 2) return false; // TEST-NET-1
+  if (a === 192 && b === 88 && octets[2] === 99) return false; // 6to4 relay anycast
+  if (a === 192 && b === 168) return false; // RFC1918
+  if (a === 198 && b >= 18 && b <= 19) return false; // benchmarking
+  if (a === 198 && b === 51 && octets[2] === 100) return false; // TEST-NET-2
+  if (a === 203 && b === 0 && octets[2] === 113) return false; // TEST-NET-3
+  if (a >= 224) return false; // multicast + reserved (224-255)
+
+  return true;
+}
+
+export function isSafeVerifyPort(port: number): boolean {
+  return Number.isInteger(port) && ALLOWED_VERIFY_PORTS.has(port);
+}
+
+export function isValidHostnameForVerification(hostname: string): boolean {
+  return /^[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))+$/i.test(hostname.trim());
+}
+
+function textTrigrams(text: string): Set<string> {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  const grams = new Set<string>();
+  for (let i = 0; i < normalized.length - 2; i++) {
+    grams.add(normalized.slice(i, i + 3));
+  }
+  return grams;
+}
+
+function trigramSimilarity(a: string, b: string): number {
+  if (!a || !b) {
+    return 0;
+  }
+  const gramsA = textTrigrams(a);
+  const gramsB = textTrigrams(b);
+  if (gramsA.size === 0 || gramsB.size === 0) {
+    return 0;
+  }
+  let intersection = 0;
+  for (const gram of gramsA) {
+    if (gramsB.has(gram)) {
+      intersection++;
+    }
+  }
+  const union = gramsA.size + gramsB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function headerOverlapRatio(a: Headers | Record<string, unknown>, b: Record<string, unknown>): number {
+  const ignored = new Set(["date", "expires", "etag", "last-modified", "x-request-id", "cf-ray", "set-cookie"]);
+  const keysA = new Set(
+    (a instanceof Headers ? Array.from(a.keys()) : Object.keys(a))
+      .map((k) => k.toLowerCase())
+      .filter((k) => !ignored.has(k)),
+  );
+  const keysB = new Set(
+    Object.keys(b)
+      .map((k) => k.toLowerCase())
+      .filter((k) => !ignored.has(k)),
+  );
+  if (keysA.size === 0 && keysB.size === 0) {
+    return 1;
+  }
+  let intersection = 0;
+  for (const key of keysA) {
+    if (keysB.has(key)) {
+      intersection++;
+    }
+  }
+  const union = new Set([...keysA, ...keysB]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+async function fetchPublicReference(
+  hostname: string,
+  useHttps: boolean,
+): Promise<{ statusCode: number | null; headers: Headers | null; body: string | null } | null> {
+  try {
+    const url = `${useHttps ? "https" : "http"}://${hostname}/`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "recon-origin-verifier/1.0", Accept: "*/*" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
+    });
+    const body = await res.text().catch(() => "");
+    return { statusCode: res.status, headers: res.headers, body: body.slice(0, 2000) };
+  } catch (err) {
+    logger.warn({ err, hostname }, "Public reference fetch failed");
+    return null;
+  }
+}
+
 const DOH_RESOLVERS: { name: string; buildUrl: (host: string) => string }[] = [
   {
     name: "Cloudflare (1.1.1.1)",
@@ -606,12 +729,22 @@ async function buildCandidateOriginIps(
   );
 }
 
-export async function verifyOrigin(
-  hostname: string,
-  ip: string,
-  port: number = 443,
-  useHttps: boolean = true,
-): Promise<OriginVerifyResult> {
+type RawVerifyOutcome = {
+  reachable: boolean;
+  statusCode: number | null;
+  statusText: string | null;
+  server: string | null;
+  responseTimeMs: number | null;
+  tlsCertMatchesHost: boolean | null;
+  tlsCertSubject: string | null;
+  tlsCertIssuer: string | null;
+  bodyPreview: string | null;
+  bodyFull: string | null;
+  headers: Record<string, unknown>;
+  error: string | null;
+};
+
+function directRequest(hostname: string, ip: string, port: number, useHttps: boolean): Promise<RawVerifyOutcome> {
   const startedAt = Date.now();
 
   return new Promise((resolve) => {
@@ -620,12 +753,12 @@ export async function verifyOrigin(
     let tlsCertIssuer: string | null = null;
     let settled = false;
 
-    const finish = (result: Omit<OriginVerifyResult, "hostname" | "ip">) => {
+    const finish = (result: RawVerifyOutcome) => {
       if (settled) {
         return;
       }
       settled = true;
-      resolve({ hostname, ip, ...result });
+      resolve(result);
     };
 
     const requestOptions: http.RequestOptions & { servername?: string; rejectUnauthorized?: boolean } = {
@@ -673,13 +806,13 @@ export async function verifyOrigin(
       const chunks: Buffer[] = [];
       let collected = 0;
       res.on("data", (chunk: Buffer) => {
-        if (collected < 2048) {
+        if (collected < 4096) {
           chunks.push(chunk);
           collected += chunk.length;
         }
       });
       res.on("end", () => {
-        const bodyPreview = Buffer.concat(chunks).toString("utf8").slice(0, 500) || null;
+        const bodyFull = Buffer.concat(chunks).toString("utf8");
         finish({
           reachable: true,
           statusCode: res.statusCode ?? null,
@@ -689,7 +822,9 @@ export async function verifyOrigin(
           tlsCertMatchesHost,
           tlsCertSubject,
           tlsCertIssuer,
-          bodyPreview,
+          bodyPreview: bodyFull.slice(0, 500) || null,
+          bodyFull: bodyFull || null,
+          headers: res.headers,
           error: null,
         });
       });
@@ -707,6 +842,8 @@ export async function verifyOrigin(
         tlsCertSubject: null,
         tlsCertIssuer: null,
         bodyPreview: null,
+        bodyFull: null,
+        headers: {},
         error: "Connection timed out.",
       });
     });
@@ -722,12 +859,142 @@ export async function verifyOrigin(
         tlsCertSubject: null,
         tlsCertIssuer: null,
         bodyPreview: null,
+        bodyFull: null,
+        headers: {},
         error: err instanceof Error ? err.message : "Connection failed.",
       });
     });
 
     req.end();
   });
+}
+
+export async function verifyOrigin(
+  hostname: string,
+  ip: string,
+  port: number = 443,
+  useHttps: boolean = true,
+): Promise<OriginVerifyResult> {
+  const [direct, publicReference] = await Promise.all([
+    directRequest(hostname, ip, port, useHttps),
+    fetchPublicReference(hostname, useHttps),
+  ]);
+
+  const proxyHeadersDetected = PROXY_INDICATOR_HEADERS.filter(
+    (h) => direct.headers[h] !== undefined,
+  );
+
+  if (!direct.reachable) {
+    return {
+      hostname,
+      ip,
+      reachable: false,
+      statusCode: null,
+      statusText: null,
+      server: null,
+      responseTimeMs: null,
+      tlsCertMatchesHost: null,
+      tlsCertSubject: null,
+      tlsCertIssuer: null,
+      bodyPreview: null,
+      proxyHeadersDetected,
+      publicStatusCode: publicReference?.statusCode ?? null,
+      publicBodySimilarity: null,
+      publicHeaderOverlap: null,
+      verdict: "indeterminate",
+      verdictReason:
+        "Direct connection failed, so no independent signals could be compared. This does not rule out the IP being the origin — it may simply be firewalled against non-standard clients.",
+      error: direct.error,
+    };
+  }
+
+  let publicBodySimilarity: number | null = null;
+  let publicHeaderOverlap: number | null = null;
+  let statusMatches: boolean | null = null;
+
+  const directBodyLen = (direct.bodyFull ?? "").trim().length;
+  const publicBodyLen = (publicReference?.body ?? "").trim().length;
+  const bothBodiesTooShortToCompare = directBodyLen < 10 && publicBodyLen < 10;
+
+  if (publicReference) {
+    publicBodySimilarity = bothBodiesTooShortToCompare
+      ? null
+      : trigramSimilarity(direct.bodyFull ?? "", publicReference.body ?? "");
+    publicHeaderOverlap = publicReference.headers
+      ? headerOverlapRatio(publicReference.headers, direct.headers)
+      : null;
+    statusMatches = publicReference.statusCode === direct.statusCode;
+  }
+
+  const reasons: string[] = [];
+  let verdict: OriginVerifyResult["verdict"] = "indeterminate";
+
+  if (proxyHeadersDetected.length > 0) {
+    verdict = "possible_proxy";
+    reasons.push(
+      `Response carries intermediary-proxy headers (${proxyHeadersDetected.join(", ")}), which are not typically added by an application origin.`,
+    );
+  } else if (publicReference && publicHeaderOverlap !== null && bothBodiesTooShortToCompare) {
+    const strongMatch = statusMatches && publicHeaderOverlap > 0.5;
+    if (strongMatch) {
+      verdict = "likely_origin";
+      reasons.push(
+        `Both responses had empty/minimal bodies (e.g. redirects), so body content could not be compared. Status match: ${statusMatches}, header overlap: ${(publicHeaderOverlap * 100).toFixed(0)}%, with no proxy-indicative headers.`,
+      );
+    } else {
+      verdict = "indeterminate";
+      reasons.push(
+        `Response bodies were too short to compare (likely redirects). Status match: ${statusMatches}, header overlap: ${(publicHeaderOverlap * 100).toFixed(0)}% — not enough signal to confirm a match.`,
+      );
+    }
+  } else if (publicReference && publicBodySimilarity !== null && publicHeaderOverlap !== null) {
+    const strongMatch = statusMatches && publicBodySimilarity > 0.6 && publicHeaderOverlap > 0.5;
+    const weakMatch = publicBodySimilarity < 0.25 || statusMatches === false;
+    if (strongMatch) {
+      verdict = "likely_origin";
+      reasons.push(
+        `Direct-IP response closely matches the public hostname's response (status match: ${statusMatches}, body similarity: ${(publicBodySimilarity * 100).toFixed(0)}%, header overlap: ${(publicHeaderOverlap * 100).toFixed(0)}%) with no proxy-indicative headers.`,
+      );
+    } else if (weakMatch) {
+      verdict = "possible_proxy";
+      reasons.push(
+        `Direct-IP response diverges from the public hostname's response (status match: ${statusMatches}, body similarity: ${(publicBodySimilarity * 100).toFixed(0)}%) — this IP may be a different backend, proxy hop, or serving a different vhost.`,
+      );
+    } else {
+      verdict = "indeterminate";
+      reasons.push("Signals are mixed — some similarity to the public response, but not enough to confirm a match.");
+    }
+  } else {
+    reasons.push(
+      "Could not fetch the public hostname for comparison, so origin status could not be cross-checked. Reachability and TLS cert match were confirmed independently.",
+    );
+  }
+
+  if (direct.tlsCertMatchesHost === false) {
+    verdict = "possible_proxy";
+    reasons.push("TLS certificate presented by this IP does not match the target hostname.");
+  }
+
+  return {
+    hostname,
+    ip,
+    reachable: true,
+    statusCode: direct.statusCode,
+    statusText: direct.statusText,
+    server: direct.server,
+    responseTimeMs: direct.responseTimeMs,
+    tlsCertMatchesHost: direct.tlsCertMatchesHost,
+    tlsCertSubject: direct.tlsCertSubject,
+    tlsCertIssuer: direct.tlsCertIssuer,
+    bodyPreview: direct.bodyPreview,
+    proxyHeadersDetected,
+    publicStatusCode: publicReference?.statusCode ?? null,
+    publicBodySimilarity,
+    publicHeaderOverlap,
+    verdict,
+    verdictReason: reasons.join(" "),
+    error: null,
+  };
 }
 
 export async function scanTarget(rawInput: string): Promise<ScanResult> {
@@ -785,8 +1052,10 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
     ? await buildCandidateOriginIps(edgeIps, subdomains)
     : edgeIpList.map((ip, i) => ({
         ip,
-        confidence: "high" as const,
-        sources: ["No CDN/proxy signature detected — this edge IP is likely the origin itself"],
+        confidence: "medium" as const,
+        sources: [
+          "No known CDN/proxy signature detected on this edge IP — it is directly reachable and not confirmed as an origin. Use Verify & Reach Origin for stronger evidence.",
+        ],
         org: formatOrg(edgeOrgInfos[i] ?? null),
         location: formatLocation(edgeOrgInfos[i] ?? null),
       }));
