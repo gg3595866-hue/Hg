@@ -46,7 +46,14 @@ export const ScanTargetResponse = zod.object({
   "candidateOriginIps": zod.array(zod.object({
   "ip": zod.string(),
   "confidence": zod.enum(['high', 'medium', 'low']),
-  "sources": zod.array(zod.string())
+  "sources": zod.array(zod.string()),
+  "org": zod.string().nullish().describe('ISP \/ hosting organization that owns this IP, from ASN lookup'),
+  "location": zod.string().nullish().describe('City\/country the IP geolocates to')
+})),
+  "edgeIpDetails": zod.array(zod.object({
+  "ip": zod.string(),
+  "org": zod.string().nullish(),
+  "location": zod.string().nullish()
 })),
   "scannedAt": zod.string()
 })

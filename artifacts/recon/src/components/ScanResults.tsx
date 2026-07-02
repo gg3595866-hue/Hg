@@ -33,6 +33,27 @@ export default function ScanResults({ result }: { result: ScanResult }) {
         )}
       </section>
 
+      {/* Edge IP Details */}
+      {result.edgeIpDetails && result.edgeIpDetails.length > 0 && (
+        <section className="space-y-3">
+          <h3 className="text-sm font-bold uppercase tracking-wider border-b border-border/50 pb-2 text-muted-foreground flex items-center gap-2">
+            <Globe className="w-4 h-4" />
+            Edge IP Ownership
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {result.edgeIpDetails.map((detail) => (
+              <div key={detail.ip} className="bg-card border border-border/50 p-3 flex flex-col gap-1">
+                <span className="font-mono text-sm text-foreground">{detail.ip}</span>
+                <span className="text-xs text-muted-foreground">
+                  {detail.org || "Unknown org"}
+                  {detail.location ? ` · ${detail.location}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Headline: Candidate Origins */}
       <section className="space-y-4">
         <h2 className="text-xl font-bold uppercase tracking-wider border-b border-border pb-2 flex items-center gap-2">
@@ -193,12 +214,20 @@ function OriginIpCard({ candidate }: { candidate: CandidateOriginIp }) {
   return (
     <div className={`p-5 border flex flex-col gap-4 bg-card ${isHigh ? 'border-primary shadow-[0_0_15px_rgba(0,255,128,0.1)]' : isMed ? 'border-amber-500/50' : 'border-border/50'}`}>
       <div className="flex items-start justify-between">
-        <div className="font-mono text-2xl font-bold tracking-tight">
-          {candidate.ip}
+        <div>
+          <div className="font-mono text-2xl font-bold tracking-tight">
+            {candidate.ip}
+          </div>
+          {(candidate.org || candidate.location) && (
+            <div className="text-xs text-muted-foreground mt-1">
+              {candidate.org || "Unknown org"}
+              {candidate.location ? ` · ${candidate.location}` : ""}
+            </div>
+          )}
         </div>
         <Badge 
           variant="outline" 
-          className={`rounded-none uppercase text-[10px] tracking-widest font-bold px-2 py-0.5 ${
+          className={`rounded-none uppercase text-[10px] tracking-widest font-bold px-2 py-0.5 shrink-0 ${
             isHigh ? 'bg-primary/20 text-primary border-primary' : 
             isMed ? 'bg-amber-500/20 text-amber-500 border-amber-500' : 
             'bg-muted text-muted-foreground border-border'

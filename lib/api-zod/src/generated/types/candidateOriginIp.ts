@@ -11,4 +11,8 @@ export interface CandidateOriginIp {
   ip: string;
   confidence: CandidateOriginIpConfidence;
   sources: string[];
+  /** ISP / hosting organization that owns this IP, from ASN lookup */
+  org?: string | null;
+  /** City/country the IP geolocates to */
+  location?: string | null;
 }

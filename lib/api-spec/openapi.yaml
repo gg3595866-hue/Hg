@@ -143,10 +143,31 @@ components:
           type: array
           items:
             type: string
+        org:
+          type: string
+          nullable: true
+          description: ISP / hosting organization that owns this IP, from ASN lookup
+        location:
+          type: string
+          nullable: true
+          description: City/country the IP geolocates to
       required:
         - ip
         - confidence
         - sources
+    IpDetails:
+      type: object
+      properties:
+        ip:
+          type: string
+        org:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+      required:
+        - ip
     ScanResult:
       type: object
       properties:
@@ -188,6 +209,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CandidateOriginIp"
+        edgeIpDetails:
+          type: array
+          items:
+            $ref: "#/components/schemas/IpDetails"
         scannedAt:
           type: string
       required:
@@ -203,5 +228,6 @@ components:
         - txtRecords
         - subdomains
         - candidateOriginIps
+        - edgeIpDetails
         - scannedAt
 

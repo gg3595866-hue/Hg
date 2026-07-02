@@ -54,7 +54,7 @@ export default function Home() {
               className={`text-sm font-semibold uppercase tracking-wider pb-2 border-b-2 transition-colors ${inputMode === 'raw' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
               onClick={() => setInputMode('raw')}
             >
-              Raw HTTP Request
+              Raw Request / Fetch
             </button>
           </div>
 
@@ -69,7 +69,7 @@ export default function Home() {
               />
             ) : (
               <Textarea
-                placeholder={"GET / HTTP/1.1\nHost: example.com\nUser-Agent: curl/7.81.0\nAccept: */*"}
+                placeholder={"GET / HTTP/1.1\nHost: example.com\nUser-Agent: curl/7.81.0\nAccept: */*\n\n— or paste a browser fetch()/axios snippet copied from DevTools —"}
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
                 className="font-mono min-h-[200px] bg-card border-border focus-visible:ring-primary focus-visible:border-primary rounded-none"

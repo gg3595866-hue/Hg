@@ -7,6 +7,7 @@
  */
 import type { CandidateOriginIp } from './candidateOriginIp';
 import type { DnsResolverResult } from './dnsResolverResult';
+import type { IpDetails } from './ipDetails';
 import type { SslCertificateInfo } from './sslCertificateInfo';
 import type { SubdomainRecord } from './subdomainRecord';
 
@@ -23,5 +24,6 @@ export interface ScanResult {
   txtRecords: string[];
   subdomains: SubdomainRecord[];
   candidateOriginIps: CandidateOriginIp[];
+  edgeIpDetails: IpDetails[];
   scannedAt: string;
 }

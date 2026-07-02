@@ -185,6 +185,22 @@ export function extractHostname(rawInput: string): string {
     return hostname.toLowerCase();
   }
 
+  // JS fetch()/axios/curl-style snippets: pull the first quoted http(s) URL out of the blob.
+  const looksLikeCode = /^(fetch|axios|curl|const|let|var|await)\b/i.test(input) || input.includes("fetch(");
+  if (looksLikeCode) {
+    const urlMatch = input.match(/["'`](https?:\/\/[^\s"'`]+)["'`]/i);
+    if (urlMatch && urlMatch[1]) {
+      try {
+        const url = new URL(urlMatch[1]);
+        if (url.hostname) {
+          return url.hostname.toLowerCase();
+        }
+      } catch {
+        // fall through to generic parsing below
+      }
+    }
+  }
+
   let candidate = input;
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) {
     candidate = `https://${candidate}`;
@@ -424,7 +440,14 @@ async function resolveSubdomains(hostnames: string[]): Promise<SubdomainRecord[]
   return results.filter((r): r is SubdomainRecord => r !== null);
 }
 
-type IpOrgInfo = { isp: string | null; org: string | null; asName: string | null };
+type IpOrgInfo = {
+  isp: string | null;
+  org: string | null;
+  asName: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+};
 
 const ipOrgCache = new Map<string, { info: IpOrgInfo | null; expiresAt: number }>();
 
@@ -434,9 +457,10 @@ async function lookupIpOrg(ip: string): Promise<IpOrgInfo | null> {
     return cached.info;
   }
   try {
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,isp,org,as`, {
-      signal: AbortSignal.timeout(4000),
-    });
+    const res = await fetch(
+      `http://ip-api.com/json/${ip}?fields=status,isp,org,as,city,regionName,country`,
+      { signal: AbortSignal.timeout(4000) },
+    );
     if (!res.ok) {
       ipOrgCache.set(ip, { info: null, expiresAt: Date.now() + 5 * 60 * 1000 });
       return null;
@@ -446,6 +470,9 @@ async function lookupIpOrg(ip: string): Promise<IpOrgInfo | null> {
       isp?: string;
       org?: string;
       as?: string;
+      city?: string;
+      regionName?: string;
+      country?: string;
     };
     if (data.status !== "success") {
       ipOrgCache.set(ip, { info: null, expiresAt: Date.now() + 5 * 60 * 1000 });
@@ -455,6 +482,9 @@ async function lookupIpOrg(ip: string): Promise<IpOrgInfo | null> {
       isp: data.isp ?? null,
       org: data.org ?? null,
       asName: data.as ?? null,
+      city: data.city ?? null,
+      region: data.regionName ?? null,
+      country: data.country ?? null,
     };
     ipOrgCache.set(ip, { info, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
     return info;
@@ -478,6 +508,14 @@ function formatOrg(info: IpOrgInfo | null): string | null {
   return info.org || info.isp || info.asName || null;
 }
 
+function formatLocation(info: IpOrgInfo | null): string | null {
+  if (!info) {
+    return null;
+  }
+  const parts = [info.city, info.region, info.country].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
 function detectCdn(
   cnames: string[],
   certIssuer: string | null,
@@ -491,7 +529,9 @@ function detectCdn(
       }
     }
   }
-  return { detected: cnames.length > 0 || edgeOrgHaystacks.length > 0, provider: null };
+  // No known CDN signature matched in cert issuer, CNAME chain, or edge IP ownership.
+  // Do not guess: absence of evidence means we treat this as a direct, unproxied origin.
+  return { detected: false, provider: null };
 }
 
 const CONFIDENCE_ORDER = { high: 0, medium: 1, low: 2 } as const;
@@ -530,6 +570,7 @@ async function buildCandidateOriginIps(
       const orgInfo = orgByIp.get(ip) ?? null;
       const cdnOrg = isCdnOrg(orgInfo);
       const orgLabel = formatOrg(orgInfo);
+      const locationLabel = formatLocation(orgInfo);
       const source = `subdomain: ${subdomain.hostname}${orgLabel ? ` (${orgLabel})` : ""}`;
       const confidence: CandidateOriginIp["confidence"] = cdnOrg
         ? "low"
@@ -546,7 +587,13 @@ async function buildCandidateOriginIps(
           existing.confidence = confidence;
         }
       } else {
-        candidates.set(ip, { ip, confidence, sources: [source] });
+        candidates.set(ip, {
+          ip,
+          confidence,
+          sources: [source],
+          org: orgLabel,
+          location: locationLabel,
+        });
       }
     }
   }
@@ -588,14 +635,16 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
 
   const edgeIps = new Set(dnsResults.flatMap((r) => r.addresses));
 
-  const edgeOrgInfos = await Promise.all(
-    Array.from(edgeIps)
-      .slice(0, 5)
-      .map((ip) => lookupIpOrg(ip)),
-  );
+  const edgeIpList = Array.from(edgeIps).slice(0, 5);
+  const edgeOrgInfos = await Promise.all(edgeIpList.map((ip) => lookupIpOrg(ip)));
   const edgeOrgHaystacks = edgeOrgInfos
     .map((info) => `${info?.isp ?? ""} ${info?.org ?? ""} ${info?.asName ?? ""}`)
     .filter(Boolean);
+  const edgeIpDetails = edgeIpList.map((ip, i) => ({
+    ip,
+    org: formatOrg(edgeOrgInfos[i] ?? null),
+    location: formatLocation(edgeOrgInfos[i] ?? null),
+  }));
 
   const { detected: cdnDetected, provider: cdnProvider } = detectCdn(
     cnames,
@@ -605,7 +654,15 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
 
   const spfRecord = txtRecords.find((record) => record.toLowerCase().startsWith("v=spf1")) ?? null;
 
-  const candidateOriginIps = await buildCandidateOriginIps(edgeIps, subdomains);
+  const candidateOriginIps = cdnDetected
+    ? await buildCandidateOriginIps(edgeIps, subdomains)
+    : edgeIpList.map((ip, i) => ({
+        ip,
+        confidence: "high" as const,
+        sources: ["No CDN/proxy signature detected — this edge IP is likely the origin itself"],
+        org: formatOrg(edgeOrgInfos[i] ?? null),
+        location: formatLocation(edgeOrgInfos[i] ?? null),
+      }));
 
   return {
     originalInput: rawInput,
@@ -613,6 +670,7 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
     cdnDetected,
     cdnProvider,
     edgeIps: Array.from(edgeIps),
+    edgeIpDetails,
     dnsResults,
     sslCertificate,
     mxRecords,

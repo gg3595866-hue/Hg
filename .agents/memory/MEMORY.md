@@ -1,0 +1,1 @@
+- [Recon CDN detection fallback bug](recon-cdn-detection.md) — a "no signature match" fallback that defaults to `detected: true` silently mislabels every direct-origin host as CDN-protected.
