@@ -10,7 +10,38 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: recon
+    description: Reverse proxy / origin IP detection operations
 paths:
+  /scan:
+    post:
+      operationId: scanTarget
+      tags: [recon]
+      summary: Analyze a URL or raw HTTP request for the real origin server behind a CDN/edge proxy
+      description: >
+        Accepts a URL or raw HTTP request, extracts the hostname, then queries multiple
+        DNS-over-HTTPS resolvers, inspects the live SSL certificate, checks MX/SPF/TXT
+        records, and searches certificate-transparency logs for subdomains that may
+        expose the real origin IP behind a CDN such as Cloudflare, Akamai, or Fastly.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanRequest"
+      responses:
+        "200":
+          description: Scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanError"
   /healthz:
     get:
       operationId: healthCheck
@@ -33,4 +64,144 @@ components:
           type: string
       required:
         - status
+    ScanRequest:
+      type: object
+      properties:
+        input:
+          type: string
+          description: A URL (e.g. https://example.com) or a raw HTTP request (with a Host header)
+      required:
+        - input
+    ScanError:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    DnsResolverResult:
+      type: object
+      properties:
+        resolver:
+          type: string
+        addresses:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
+          nullable: true
+      required:
+        - resolver
+        - addresses
+    SslCertificateInfo:
+      type: object
+      properties:
+        subject:
+          type: string
+          nullable: true
+        issuer:
+          type: string
+          nullable: true
+        validFrom:
+          type: string
+          nullable: true
+        validTo:
+          type: string
+          nullable: true
+        altNames:
+          type: array
+          items:
+            type: string
+        fingerprint:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+    SubdomainRecord:
+      type: object
+      properties:
+        hostname:
+          type: string
+        addresses:
+          type: array
+          items:
+            type: string
+      required:
+        - hostname
+        - addresses
+    CandidateOriginIp:
+      type: object
+      properties:
+        ip:
+          type: string
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        sources:
+          type: array
+          items:
+            type: string
+      required:
+        - ip
+        - confidence
+        - sources
+    ScanResult:
+      type: object
+      properties:
+        originalInput:
+          type: string
+        hostname:
+          type: string
+        cdnDetected:
+          type: boolean
+        cdnProvider:
+          type: string
+          nullable: true
+        edgeIps:
+          type: array
+          items:
+            type: string
+        dnsResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/DnsResolverResult"
+        sslCertificate:
+          $ref: "#/components/schemas/SslCertificateInfo"
+        mxRecords:
+          type: array
+          items:
+            type: string
+        spfRecord:
+          type: string
+          nullable: true
+        txtRecords:
+          type: array
+          items:
+            type: string
+        subdomains:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubdomainRecord"
+        candidateOriginIps:
+          type: array
+          items:
+            $ref: "#/components/schemas/CandidateOriginIp"
+        scannedAt:
+          type: string
+      required:
+        - originalInput
+        - hostname
+        - cdnDetected
+        - cdnProvider
+        - edgeIps
+        - dnsResults
+        - sslCertificate
+        - mxRecords
+        - spfRecord
+        - txtRecords
+        - subdomains
+        - candidateOriginIps
+        - scannedAt
 
