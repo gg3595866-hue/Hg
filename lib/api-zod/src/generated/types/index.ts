@@ -11,6 +11,8 @@ export * from './candidateOriginIpConfidence';
 export * from './dnsResolverResult';
 export * from './healthStatus';
 export * from './ipDetails';
+export * from './originVerifyRequest';
+export * from './originVerifyResult';
 export * from './scanError';
 export * from './scanRequest';
 export * from './scanResult';

@@ -60,6 +60,36 @@ export const ScanTargetResponse = zod.object({
 
 
 /**
+ * Connects directly to a candidate origin IP (bypassing DNS/CDN routing) and sends an HTTP request with the target hostname in the Host header and TLS SNI. Reports whether the origin responds, its status code, response headers, and whether its TLS certificate matches the target hostname — proving the CDN can be bypassed.
+ * @summary Attempt to directly reach a candidate origin IP using the target's Host header
+ */
+export const verifyOriginBodyPortDefault = 443;
+export const verifyOriginBodyUseHttpsDefault = true;
+
+export const VerifyOriginBody = zod.object({
+  "hostname": zod.string().describe('The original target hostname to send as Host header \/ TLS SNI'),
+  "ip": zod.string().describe('The candidate origin IP to connect to directly'),
+  "port": zod.number().default(verifyOriginBodyPortDefault).describe('Port to connect on'),
+  "useHttps": zod.boolean().default(verifyOriginBodyUseHttpsDefault).describe('Whether to use TLS (HTTPS) for the direct connection')
+})
+
+export const VerifyOriginResponse = zod.object({
+  "hostname": zod.string(),
+  "ip": zod.string(),
+  "reachable": zod.boolean(),
+  "statusCode": zod.number().nullish(),
+  "statusText": zod.string().nullish(),
+  "server": zod.string().nullish(),
+  "responseTimeMs": zod.number().nullish(),
+  "tlsCertMatchesHost": zod.boolean().nullish(),
+  "tlsCertSubject": zod.string().nullish(),
+  "tlsCertIssuer": zod.string().nullish(),
+  "bodyPreview": zod.string().nullish(),
+  "error": zod.string().nullish()
+})
+
+
+/**
  * Returns server health status
  * @summary Health check
  */

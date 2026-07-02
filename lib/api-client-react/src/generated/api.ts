@@ -21,6 +21,8 @@ import type {
 
 import type {
   HealthStatus,
+  OriginVerifyRequest,
+  OriginVerifyResult,
   ScanError,
   ScanRequest,
   ScanResult
@@ -122,6 +124,77 @@ export const useScanTarget = <TError = ErrorType<ScanError>,
         TContext
       > => {
       return useMutation(getScanTargetMutationOptions(options));
+    }
+
+export const getVerifyOriginUrl = () => {
+
+
+
+
+  return `/api/verify-origin`
+}
+
+/**
+ * Connects directly to a candidate origin IP (bypassing DNS/CDN routing) and sends an HTTP request with the target hostname in the Host header and TLS SNI. Reports whether the origin responds, its status code, response headers, and whether its TLS certificate matches the target hostname — proving the CDN can be bypassed.
+ * @summary Attempt to directly reach a candidate origin IP using the target's Host header
+ */
+export const verifyOrigin = async (originVerifyRequest: OriginVerifyRequest, options?: RequestInit): Promise<OriginVerifyResult> => {
+
+  return customFetch<OriginVerifyResult>(getVerifyOriginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(originVerifyRequest)
+  }
+);}
+
+
+
+
+export const getVerifyOriginMutationOptions = <TError = ErrorType<ScanError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyOrigin>>, TError,{data: BodyType<OriginVerifyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyOrigin>>, TError,{data: BodyType<OriginVerifyRequest>}, TContext> => {
+
+const mutationKey = ['verifyOrigin'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyOrigin>>, {data: BodyType<OriginVerifyRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyOrigin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyOriginMutationResult = NonNullable<Awaited<ReturnType<typeof verifyOrigin>>>
+    export type VerifyOriginMutationBody = BodyType<OriginVerifyRequest>
+    export type VerifyOriginMutationError = ErrorType<ScanError>
+
+    /**
+ * @summary Attempt to directly reach a candidate origin IP using the target's Host header
+ */
+export const useVerifyOrigin = <TError = ErrorType<ScanError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyOrigin>>, TError,{data: BodyType<OriginVerifyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof verifyOrigin>>,
+        TError,
+        {data: BodyType<OriginVerifyRequest>},
+        TContext
+      > => {
+      return useMutation(getVerifyOriginMutationOptions(options));
     }
 
 export const getHealthCheckUrl = () => {

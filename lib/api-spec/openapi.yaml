@@ -42,6 +42,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScanError"
+  /verify-origin:
+    post:
+      operationId: verifyOrigin
+      tags: [recon]
+      summary: Attempt to directly reach a candidate origin IP using the target's Host header
+      description: >
+        Connects directly to a candidate origin IP (bypassing DNS/CDN routing) and sends
+        an HTTP request with the target hostname in the Host header and TLS SNI. Reports
+        whether the origin responds, its status code, response headers, and whether its
+        TLS certificate matches the target hostname — proving the CDN can be bypassed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OriginVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OriginVerifyResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanError"
   /healthz:
     get:
       operationId: healthCheck
@@ -72,6 +101,66 @@ components:
           description: A URL (e.g. https://example.com) or a raw HTTP request (with a Host header)
       required:
         - input
+    OriginVerifyRequest:
+      type: object
+      properties:
+        hostname:
+          type: string
+          description: The original target hostname to send as Host header / TLS SNI
+        ip:
+          type: string
+          description: The candidate origin IP to connect to directly
+        port:
+          type: integer
+          description: Port to connect on
+          default: 443
+        useHttps:
+          type: boolean
+          description: Whether to use TLS (HTTPS) for the direct connection
+          default: true
+      required:
+        - hostname
+        - ip
+    OriginVerifyResult:
+      type: object
+      properties:
+        hostname:
+          type: string
+        ip:
+          type: string
+        reachable:
+          type: boolean
+        statusCode:
+          type: integer
+          nullable: true
+        statusText:
+          type: string
+          nullable: true
+        server:
+          type: string
+          nullable: true
+        responseTimeMs:
+          type: integer
+          nullable: true
+        tlsCertMatchesHost:
+          type: boolean
+          nullable: true
+        tlsCertSubject:
+          type: string
+          nullable: true
+        tlsCertIssuer:
+          type: string
+          nullable: true
+        bodyPreview:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+      required:
+        - hostname
+        - ip
+        - reachable
     ScanError:
       type: object
       properties:

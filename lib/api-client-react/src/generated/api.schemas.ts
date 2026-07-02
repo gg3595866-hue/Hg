@@ -14,6 +14,32 @@ export interface ScanRequest {
   input: string;
 }
 
+export interface OriginVerifyRequest {
+  /** The original target hostname to send as Host header / TLS SNI */
+  hostname: string;
+  /** The candidate origin IP to connect to directly */
+  ip: string;
+  /** Port to connect on */
+  port?: number;
+  /** Whether to use TLS (HTTPS) for the direct connection */
+  useHttps?: boolean;
+}
+
+export interface OriginVerifyResult {
+  hostname: string;
+  ip: string;
+  reachable: boolean;
+  statusCode?: number | null;
+  statusText?: string | null;
+  server?: string | null;
+  responseTimeMs?: number | null;
+  tlsCertMatchesHost?: boolean | null;
+  tlsCertSubject?: string | null;
+  tlsCertIssuer?: string | null;
+  bodyPreview?: string | null;
+  error?: string | null;
+}
+
 export interface ScanError {
   message: string;
 }

@@ -1,8 +1,12 @@
-import { ScanResult, CandidateOriginIp, CandidateOriginIpConfidence, DnsResolverResult, SslCertificateInfo, SubdomainRecord } from "@workspace/api-client-react";
-import { Shield, ShieldAlert, ShieldCheck, Server, Globe, Lock, Mail, Database, ChevronRight, AlertCircle, Fingerprint } from "lucide-react";
+import { useState } from "react";
+import { ScanResult, CandidateOriginIp, CandidateOriginIpConfidence, DnsResolverResult, SslCertificateInfo, SubdomainRecord, useVerifyOrigin, OriginVerifyResult } from "@workspace/api-client-react";
+import { Shield, ShieldAlert, ShieldCheck, Server, Globe, Lock, Mail, Database, ChevronRight, AlertCircle, Fingerprint, Zap, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 export default function ScanResults({ result }: { result: ScanResult }) {
+  const useHttps = result.sslCertificate && !result.sslCertificate.error;
+
   
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -71,7 +75,7 @@ export default function ScanResults({ result }: { result: ScanResult }) {
               const weight = { high: 3, medium: 2, low: 1 };
               return weight[b.confidence] - weight[a.confidence];
             }).map((ip, i) => (
-              <OriginIpCard key={i} candidate={ip} />
+              <OriginIpCard key={i} candidate={ip} hostname={result.hostname} useHttps={!!useHttps} />
             ))}
           </div>
         )}
@@ -207,10 +211,26 @@ export default function ScanResults({ result }: { result: ScanResult }) {
   );
 }
 
-function OriginIpCard({ candidate }: { candidate: CandidateOriginIp }) {
+function OriginIpCard({
+  candidate,
+  hostname,
+  useHttps,
+}: {
+  candidate: CandidateOriginIp;
+  hostname: string;
+  useHttps: boolean;
+}) {
   const isHigh = candidate.confidence === "high";
   const isMed = candidate.confidence === "medium";
-  
+  const verifyMutation = useVerifyOrigin();
+  const verifyResult = verifyMutation.data as OriginVerifyResult | undefined;
+
+  const handleVerify = () => {
+    verifyMutation.mutate({
+      data: { hostname, ip: candidate.ip, port: useHttps ? 443 : 80, useHttps },
+    });
+  };
+
   return (
     <div className={`p-5 border flex flex-col gap-4 bg-card ${isHigh ? 'border-primary shadow-[0_0_15px_rgba(0,255,128,0.1)]' : isMed ? 'border-amber-500/50' : 'border-border/50'}`}>
       <div className="flex items-start justify-between">
@@ -247,6 +267,83 @@ function OriginIpCard({ candidate }: { candidate: CandidateOriginIp }) {
             </span>
           ))}
         </div>
+      </div>
+
+      <div className="border-t border-border/50 pt-4 flex flex-col gap-3">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="rounded-none uppercase text-xs tracking-wider font-bold self-start"
+          onClick={handleVerify}
+          disabled={verifyMutation.isPending}
+        >
+          {verifyMutation.isPending ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Reaching origin...
+            </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5" />
+              Verify &amp; Reach Origin
+            </span>
+          )}
+        </Button>
+
+        {verifyMutation.isError && (
+          <div className="text-xs text-destructive flex items-start gap-2">
+            <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            {(verifyMutation.error as any)?.message || "Verification request failed."}
+          </div>
+        )}
+
+        {verifyResult && (
+          <div
+            className={`text-xs p-3 border flex flex-col gap-2 font-mono ${
+              verifyResult.reachable
+                ? "border-primary/50 bg-primary/5"
+                : "border-destructive/50 bg-destructive/5"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {verifyResult.reachable ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />
+              )}
+              <span className="font-bold">
+                {verifyResult.reachable
+                  ? `Origin reached directly — CDN bypassed`
+                  : "Origin did not respond directly"}
+              </span>
+            </div>
+
+            {verifyResult.reachable && (
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+                <span>Status: <span className="text-foreground">{verifyResult.statusCode} {verifyResult.statusText}</span></span>
+                {verifyResult.responseTimeMs != null && (
+                  <span>Latency: <span className="text-foreground">{verifyResult.responseTimeMs}ms</span></span>
+                )}
+                {verifyResult.server && (
+                  <span className="col-span-2">Server: <span className="text-foreground">{verifyResult.server}</span></span>
+                )}
+                {verifyResult.tlsCertMatchesHost != null && (
+                  <span className="col-span-2">
+                    TLS cert matches host:{" "}
+                    <span className={verifyResult.tlsCertMatchesHost ? "text-primary" : "text-amber-500"}>
+                      {verifyResult.tlsCertMatchesHost ? "Yes" : "No"}
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {verifyResult.error && (
+              <div className="text-destructive">{verifyResult.error}</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

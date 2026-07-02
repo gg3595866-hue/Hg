@@ -1,8 +1,11 @@
 import dns from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import tls from "node:tls";
 import type {
   CandidateOriginIp,
   DnsResolverResult,
+  OriginVerifyResult,
   ScanResult,
   SslCertificateInfo,
   SubdomainRecord,
@@ -601,6 +604,130 @@ async function buildCandidateOriginIps(
   return Array.from(candidates.values()).sort(
     (a, b) => CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence],
   );
+}
+
+export async function verifyOrigin(
+  hostname: string,
+  ip: string,
+  port: number = 443,
+  useHttps: boolean = true,
+): Promise<OriginVerifyResult> {
+  const startedAt = Date.now();
+
+  return new Promise((resolve) => {
+    let tlsCertMatchesHost: boolean | null = null;
+    let tlsCertSubject: string | null = null;
+    let tlsCertIssuer: string | null = null;
+    let settled = false;
+
+    const finish = (result: Omit<OriginVerifyResult, "hostname" | "ip">) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve({ hostname, ip, ...result });
+    };
+
+    const requestOptions: http.RequestOptions & { servername?: string; rejectUnauthorized?: boolean } = {
+      host: ip,
+      port,
+      path: "/",
+      method: "GET",
+      headers: {
+        Host: hostname,
+        "User-Agent": "recon-origin-verifier/1.0",
+        Accept: "*/*",
+      },
+      timeout: NETWORK_TIMEOUT_MS,
+    };
+
+    if (useHttps) {
+      requestOptions.servername = hostname;
+      requestOptions.rejectUnauthorized = false;
+    }
+
+    const transport = useHttps ? https : http;
+    const req = transport.request(requestOptions, (res) => {
+      if (useHttps) {
+        const socket = res.socket as tls.TLSSocket;
+        try {
+          const cert = socket.getPeerCertificate?.();
+          if (cert && Object.keys(cert).length > 0) {
+            const subjectCn = cert.subject?.CN;
+            const issuerCn = cert.issuer?.CN;
+            tlsCertSubject = Array.isArray(subjectCn) ? (subjectCn[0] ?? null) : (subjectCn ?? null);
+            tlsCertIssuer = Array.isArray(issuerCn) ? (issuerCn[0] ?? null) : (issuerCn ?? null);
+            const altNames = (cert.subjectaltname ?? "")
+              .split(",")
+              .map((s) => s.trim().replace(/^DNS:/, "").toLowerCase());
+            tlsCertMatchesHost =
+              altNames.includes(hostname.toLowerCase()) ||
+              (tlsCertSubject?.toLowerCase() === hostname.toLowerCase()) ||
+              altNames.some((name) => name.startsWith("*.") && hostname.toLowerCase().endsWith(name.slice(1)));
+          }
+        } catch {
+          // Certificate inspection failed; leave TLS fields null rather than guessing.
+        }
+      }
+
+      const chunks: Buffer[] = [];
+      let collected = 0;
+      res.on("data", (chunk: Buffer) => {
+        if (collected < 2048) {
+          chunks.push(chunk);
+          collected += chunk.length;
+        }
+      });
+      res.on("end", () => {
+        const bodyPreview = Buffer.concat(chunks).toString("utf8").slice(0, 500) || null;
+        finish({
+          reachable: true,
+          statusCode: res.statusCode ?? null,
+          statusText: res.statusMessage ?? null,
+          server: (res.headers["server"] as string) ?? null,
+          responseTimeMs: Date.now() - startedAt,
+          tlsCertMatchesHost,
+          tlsCertSubject,
+          tlsCertIssuer,
+          bodyPreview,
+          error: null,
+        });
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy();
+      finish({
+        reachable: false,
+        statusCode: null,
+        statusText: null,
+        server: null,
+        responseTimeMs: null,
+        tlsCertMatchesHost: null,
+        tlsCertSubject: null,
+        tlsCertIssuer: null,
+        bodyPreview: null,
+        error: "Connection timed out.",
+      });
+    });
+
+    req.on("error", (err) => {
+      finish({
+        reachable: false,
+        statusCode: null,
+        statusText: null,
+        server: null,
+        responseTimeMs: null,
+        tlsCertMatchesHost: null,
+        tlsCertSubject: null,
+        tlsCertIssuer: null,
+        bodyPreview: null,
+        error: err instanceof Error ? err.message : "Connection failed.",
+      });
+    });
+
+    req.end();
+  });
 }
 
 export async function scanTarget(rawInput: string): Promise<ScanResult> {
