@@ -42,6 +42,46 @@ const CDN_SIGNATURES: { provider: string; patterns: RegExp[] }[] = [
   { provider: "StackPath", patterns: [/stackpath/i] },
   { provider: "Google Cloud CDN", patterns: [/googleusercontent/i, /ghs\.google\.com$/i] },
   { provider: "Azure Front Door / CDN", patterns: [/azureedge\.net$/i, /azurefd\.net$/i] },
+  { provider: "DDoS-Guard", patterns: [/ddos-guard/i] },
+  { provider: "Voxility", patterns: [/voxility/i] },
+  { provider: "Qrator", patterns: [/qrator/i] },
+  { provider: "Reblaze", patterns: [/reblaze/i] },
+  { provider: "BitNinja", patterns: [/bitninja/i] },
+  { provider: "Vercel", patterns: [/vercel/i] },
+  { provider: "Netlify", patterns: [/netlify/i] },
+];
+
+const CDN_ORG_KEYWORDS = [
+  "cloudflare",
+  "akamai",
+  "fastly",
+  "amazon",
+  "aws",
+  "google",
+  "microsoft",
+  "azure",
+  "incapsula",
+  "imperva",
+  "sucuri",
+  "stackpath",
+  "edgecast",
+  "limelight",
+  "level 3",
+  "level3",
+  "centurylink",
+  "ddos-guard",
+  "ddos guard",
+  "voxility",
+  "qrator",
+  "reblaze",
+  "cachefly",
+  "keycdn",
+  "vercel",
+  "netlify",
+  "highwinds",
+  "cdn77",
+  "g-core",
+  "gcore",
 ];
 
 const ORIGIN_HINT_KEYWORDS = [
@@ -59,6 +99,61 @@ const ORIGIN_HINT_KEYWORDS = [
   "internal",
   "real",
   "host",
+  "mail",
+  "smtp",
+  "admin",
+  "portal",
+  "vpn",
+  "remote",
+  "old",
+  "legacy",
+  "dev",
+  "staging",
+  "test",
+  "backup",
+];
+
+const COMMON_SUBDOMAIN_WORDLIST = [
+  "origin",
+  "origin-www",
+  "direct",
+  "direct-connect",
+  "www",
+  "mail",
+  "webmail",
+  "smtp",
+  "ftp",
+  "cpanel",
+  "admin",
+  "portal",
+  "vpn",
+  "remote",
+  "api",
+  "app",
+  "backend",
+  "server",
+  "old",
+  "legacy",
+  "dev",
+  "staging",
+  "test",
+  "beta",
+  "m",
+  "mobile",
+  "cdn",
+  "static",
+  "assets",
+  "media",
+  "img",
+  "images",
+  "secure",
+  "login",
+  "internal",
+  "backup",
+  "host",
+  "web",
+  "web1",
+  "web2",
 ];
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -251,7 +346,7 @@ async function fetchCrtShSubdomains(hostname: string): Promise<string[]> {
   try {
     const res = await fetch(
       `https://crt.sh/?q=${encodeURIComponent(`%.${hostname}`)}&output=json`,
-      { signal: AbortSignal.timeout(10000) },
+      { signal: AbortSignal.timeout(15000) },
     );
     if (!res.ok) {
       return [];
@@ -273,9 +368,41 @@ async function fetchCrtShSubdomains(hostname: string): Promise<string[]> {
         }
       }
     }
-    return Array.from(names).slice(0, 25);
+    return Array.from(names).slice(0, 40);
   } catch (err) {
     logger.warn({ err, hostname }, "crt.sh lookup failed");
+    return [];
+  }
+}
+
+async function fetchCertSpotterSubdomains(hostname: string): Promise<string[]> {
+  try {
+    const res = await fetch(
+      `https://api.certspotter.com/v1/issuances?domain=${encodeURIComponent(hostname)}&include_subdomains=true&expand=dns_names`,
+      { signal: AbortSignal.timeout(15000) },
+    );
+    if (!res.ok) {
+      return [];
+    }
+    const data = (await res.json()) as { dns_names?: string[] }[];
+    const names = new Set<string>();
+    for (const entry of data) {
+      for (const name of entry.dns_names ?? []) {
+        const cleaned = name.trim().toLowerCase().replace(/^\*\./, "");
+        if (
+          cleaned &&
+          cleaned.endsWith(hostname) &&
+          cleaned !== hostname &&
+          !cleaned.includes(" ") &&
+          !cleaned.includes("*")
+        ) {
+          names.add(cleaned);
+        }
+      }
+    }
+    return Array.from(names).slice(0, 40);
+  } catch (err) {
+    logger.warn({ err, hostname }, "certspotter lookup failed");
     return [];
   }
 }
@@ -297,11 +424,66 @@ async function resolveSubdomains(hostnames: string[]): Promise<SubdomainRecord[]
   return results.filter((r): r is SubdomainRecord => r !== null);
 }
 
+type IpOrgInfo = { isp: string | null; org: string | null; asName: string | null };
+
+const ipOrgCache = new Map<string, { info: IpOrgInfo | null; expiresAt: number }>();
+
+async function lookupIpOrg(ip: string): Promise<IpOrgInfo | null> {
+  const cached = ipOrgCache.get(ip);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.info;
+  }
+  try {
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,isp,org,as`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) {
+      ipOrgCache.set(ip, { info: null, expiresAt: Date.now() + 5 * 60 * 1000 });
+      return null;
+    }
+    const data = (await res.json()) as {
+      status?: string;
+      isp?: string;
+      org?: string;
+      as?: string;
+    };
+    if (data.status !== "success") {
+      ipOrgCache.set(ip, { info: null, expiresAt: Date.now() + 5 * 60 * 1000 });
+      return null;
+    }
+    const info: IpOrgInfo = {
+      isp: data.isp ?? null,
+      org: data.org ?? null,
+      asName: data.as ?? null,
+    };
+    ipOrgCache.set(ip, { info, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+function isCdnOrg(info: IpOrgInfo | null): boolean {
+  if (!info) {
+    return false;
+  }
+  const haystack = `${info.isp ?? ""} ${info.org ?? ""} ${info.asName ?? ""}`.toLowerCase();
+  return CDN_ORG_KEYWORDS.some((keyword) => haystack.includes(keyword));
+}
+
+function formatOrg(info: IpOrgInfo | null): string | null {
+  if (!info) {
+    return null;
+  }
+  return info.org || info.isp || info.asName || null;
+}
+
 function detectCdn(
   cnames: string[],
   certIssuer: string | null,
+  edgeOrgHaystacks: string[],
 ): { detected: boolean; provider: string | null } {
-  const haystacks = [...cnames, certIssuer ?? ""].filter(Boolean);
+  const haystacks = [...cnames, certIssuer ?? "", ...edgeOrgHaystacks].filter(Boolean);
   for (const signature of CDN_SIGNATURES) {
     for (const haystack of haystacks) {
       if (signature.patterns.some((pattern) => pattern.test(haystack))) {
@@ -309,14 +491,33 @@ function detectCdn(
       }
     }
   }
-  return { detected: cnames.length > 0, provider: null };
+  return { detected: cnames.length > 0 || edgeOrgHaystacks.length > 0, provider: null };
 }
 
-function buildCandidateOriginIps(
+const CONFIDENCE_ORDER = { high: 0, medium: 1, low: 2 } as const;
+
+async function buildCandidateOriginIps(
   edgeIps: Set<string>,
   subdomains: SubdomainRecord[],
-): CandidateOriginIp[] {
+): Promise<CandidateOriginIp[]> {
   const candidates = new Map<string, CandidateOriginIp>();
+  const uniqueCandidateIps = new Set<string>();
+  for (const subdomain of subdomains) {
+    for (const ip of subdomain.addresses) {
+      if (!edgeIps.has(ip)) {
+        uniqueCandidateIps.add(ip);
+      }
+    }
+  }
+
+  const orgByIp = new Map<string, IpOrgInfo | null>();
+  await Promise.all(
+    Array.from(uniqueCandidateIps)
+      .slice(0, 25)
+      .map(async (ip) => {
+        orgByIp.set(ip, await lookupIpOrg(ip));
+      }),
+  );
 
   for (const subdomain of subdomains) {
     const looksLikeOrigin = ORIGIN_HINT_KEYWORDS.some((keyword) =>
@@ -326,35 +527,39 @@ function buildCandidateOriginIps(
       if (edgeIps.has(ip)) {
         continue;
       }
+      const orgInfo = orgByIp.get(ip) ?? null;
+      const cdnOrg = isCdnOrg(orgInfo);
+      const orgLabel = formatOrg(orgInfo);
+      const source = `subdomain: ${subdomain.hostname}${orgLabel ? ` (${orgLabel})` : ""}`;
+      const confidence: CandidateOriginIp["confidence"] = cdnOrg
+        ? "low"
+        : looksLikeOrigin
+          ? "high"
+          : "medium";
+
       const existing = candidates.get(ip);
-      const source = `subdomain: ${subdomain.hostname}`;
       if (existing) {
         if (!existing.sources.includes(source)) {
           existing.sources.push(source);
         }
-        if (looksLikeOrigin && existing.confidence !== "high") {
-          existing.confidence = "high";
+        if (CONFIDENCE_ORDER[confidence] < CONFIDENCE_ORDER[existing.confidence]) {
+          existing.confidence = confidence;
         }
       } else {
-        candidates.set(ip, {
-          ip,
-          confidence: looksLikeOrigin ? "high" : "medium",
-          sources: [source],
-        });
+        candidates.set(ip, { ip, confidence, sources: [source] });
       }
     }
   }
 
-  return Array.from(candidates.values()).sort((a, b) => {
-    const order = { high: 0, medium: 1, low: 2 };
-    return order[a.confidence] - order[b.confidence];
-  });
+  return Array.from(candidates.values()).sort(
+    (a, b) => CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence],
+  );
 }
 
 export async function scanTarget(rawInput: string): Promise<ScanResult> {
   const hostname = extractHostname(rawInput);
 
-  const [dnsResults, sslCertificate, mxRecords, txtRecords, cnames, crtShHosts] =
+  const [dnsResults, sslCertificate, mxRecords, mxHosts, txtRecords, cnames, crtShHosts, certSpotterHosts] =
     await Promise.all([
       Promise.all(
         DOH_RESOLVERS.map((resolver) =>
@@ -363,22 +568,44 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
       ),
       fetchSslCertificate(hostname),
       fetchMxRecords(hostname),
+      dns.resolveMx(hostname).catch(() => []),
       fetchTxtRecords(hostname),
       fetchCname(hostname),
       fetchCrtShSubdomains(hostname),
+      fetchCertSpotterSubdomains(hostname),
     ]);
 
-  const subdomains = await resolveSubdomains(crtShHosts);
+  const bruteForceHosts = COMMON_SUBDOMAIN_WORDLIST.map((word) => `${word}.${hostname}`);
+  const mxExchangeHosts = mxHosts
+    .map((r) => r.exchange.toLowerCase().replace(/\.$/, ""))
+    .filter((host) => host && host !== hostname);
+
+  const candidateHostnames = Array.from(
+    new Set([...crtShHosts, ...certSpotterHosts, ...bruteForceHosts, ...mxExchangeHosts]),
+  );
+
+  const subdomains = await resolveSubdomains(candidateHostnames);
 
   const edgeIps = new Set(dnsResults.flatMap((r) => r.addresses));
+
+  const edgeOrgInfos = await Promise.all(
+    Array.from(edgeIps)
+      .slice(0, 5)
+      .map((ip) => lookupIpOrg(ip)),
+  );
+  const edgeOrgHaystacks = edgeOrgInfos
+    .map((info) => `${info?.isp ?? ""} ${info?.org ?? ""} ${info?.asName ?? ""}`)
+    .filter(Boolean);
+
   const { detected: cdnDetected, provider: cdnProvider } = detectCdn(
     cnames,
     sslCertificate.issuer ?? null,
+    edgeOrgHaystacks,
   );
 
   const spfRecord = txtRecords.find((record) => record.toLowerCase().startsWith("v=spf1")) ?? null;
 
-  const candidateOriginIps = buildCandidateOriginIps(edgeIps, subdomains);
+  const candidateOriginIps = await buildCandidateOriginIps(edgeIps, subdomains);
 
   return {
     originalInput: rawInput,
