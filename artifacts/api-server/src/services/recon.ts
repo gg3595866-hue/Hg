@@ -282,6 +282,76 @@ const COMMON_SUBDOMAIN_WORDLIST = [
   "web2",
 ];
 
+const SENSITIVE_ENDPOINT_PATHS = [
+  "/admin",
+  "/admin/login",
+  "/administrator",
+  "/admin.php",
+  "/admin/index.php",
+  "/wp-admin",
+  "/wp-login.php",
+  "/staff",
+  "/staff/login",
+  "/staff-login",
+  "/employee",
+  "/employees",
+  "/manage",
+  "/management",
+  "/manager",
+  "/backend",
+  "/backend/login",
+  "/cpanel",
+  "/control-panel",
+  "/dashboard",
+  "/dashboard/login",
+  "/moderator",
+  "/panel",
+  "/adminpanel",
+  "/admincp",
+  "/useradmin",
+  "/superadmin",
+  "/internal",
+];
+
+async function probeEndpoint(
+  hostname: string,
+  useHttps: boolean,
+  path: string,
+): Promise<{ path: string; url: string; reachable: boolean; statusCode: number | null; found: boolean; error: string | null }> {
+  const url = `${useHttps ? "https" : "http"}://${hostname}${path}`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "User-Agent": "recon-origin-verifier/1.0", Accept: "*/*" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000),
+    });
+    const found = res.status !== 404 && res.status < 500;
+    return { path, url, reachable: true, statusCode: res.status, found, error: null };
+  } catch (err) {
+    return {
+      path,
+      url,
+      reachable: false,
+      statusCode: null,
+      found: false,
+      error: err instanceof Error ? err.message : "Request failed",
+    };
+  }
+}
+
+async function probeSensitiveEndpoints(
+  hostname: string,
+  useHttps: boolean,
+): Promise<
+  { path: string; url: string; reachable: boolean; statusCode: number | null; found: boolean; error: string | null }[]
+> {
+  const results = await Promise.all(
+    SENSITIVE_ENDPOINT_PATHS.map((path) => probeEndpoint(hostname, useHttps, path)),
+  );
+  return results;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
@@ -1149,6 +1219,9 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
       fetchCertSpotterSubdomains(hostname),
     ]);
 
+  const useHttpsForProbes = !sslCertificate.error;
+  const sensitiveEndpoints = await probeSensitiveEndpoints(hostname, useHttpsForProbes);
+
   const bruteForceHosts = COMMON_SUBDOMAIN_WORDLIST.map((word) => `${word}.${hostname}`);
   const mxExchangeHosts = mxHosts
     .map((r) => r.exchange.toLowerCase().replace(/\.$/, ""))
@@ -1207,6 +1280,7 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
     txtRecords,
     subdomains,
     candidateOriginIps,
+    sensitiveEndpoints,
     scannedAt: new Date().toISOString(),
   };
 }
