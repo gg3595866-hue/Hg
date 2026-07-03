@@ -71,6 +71,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScanError"
+  /proxy-request:
+    post:
+      operationId: sendProxyRequest
+      tags: [recon]
+      summary: Send a custom HTTP request directly to a candidate origin IP
+      description: >
+        Connects directly to a candidate origin IP (bypassing DNS/CDN routing) and sends
+        a fully custom HTTP request — method, path, headers, and body — with the target
+        hostname spoofed in the Host header and TLS SNI. Returns the raw response from
+        the backend so you can interact with it as if the CDN/proxy were not there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyRequestBody"
+      responses:
+        "200":
+          description: Response from the origin server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyRequestResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanError"
   /healthz:
     get:
       operationId: healthCheck
@@ -198,6 +227,75 @@ components:
           type: string
       required:
         - message
+    ProxyRequestBody:
+      type: object
+      properties:
+        hostname:
+          type: string
+          description: The original target hostname to send as Host header / TLS SNI
+        ip:
+          type: string
+          description: The candidate origin IP to connect to directly
+        port:
+          type: integer
+          description: Port to connect on
+          default: 443
+        useHttps:
+          type: boolean
+          description: Whether to use TLS (HTTPS) for the direct connection
+          default: true
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+          default: GET
+        path:
+          type: string
+          description: Request path (and query string), e.g. /api/users?id=1
+          default: /
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Extra request headers to send (Host is always overridden with hostname)
+        body:
+          type: string
+          nullable: true
+          description: Raw request body to send (ignored for GET/HEAD)
+      required:
+        - hostname
+        - ip
+        - method
+        - path
+    ProxyRequestResult:
+      type: object
+      properties:
+        reachable:
+          type: boolean
+        statusCode:
+          type: integer
+          nullable: true
+        statusText:
+          type: string
+          nullable: true
+        responseTimeMs:
+          type: integer
+          nullable: true
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: string
+          nullable: true
+        bodyTruncated:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+      required:
+        - reachable
+        - headers
+        - bodyTruncated
     DnsResolverResult:
       type: object
       properties:

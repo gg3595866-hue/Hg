@@ -997,6 +997,139 @@ export async function verifyOrigin(
   };
 }
 
+const PROXY_REQUEST_BODY_LIMIT_BYTES = 512 * 1024; // 512KB
+
+export type ProxyRequestOptions = {
+  hostname: string;
+  ip: string;
+  port: number;
+  useHttps: boolean;
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  body?: string | null;
+};
+
+export type ProxyRequestOutcome = {
+  reachable: boolean;
+  statusCode: number | null;
+  statusText: string | null;
+  responseTimeMs: number | null;
+  headers: Record<string, string>;
+  body: string | null;
+  bodyTruncated: boolean;
+  error: string | null;
+};
+
+export function sendProxyRequest(options: ProxyRequestOptions): Promise<ProxyRequestOutcome> {
+  const { hostname, ip, port, useHttps, method, path, headers, body } = options;
+  const startedAt = Date.now();
+  const normalizedMethod = method.toUpperCase();
+  const hasBody = body != null && body.length > 0 && normalizedMethod !== "GET" && normalizedMethod !== "HEAD";
+  const bodyBuffer = hasBody ? Buffer.from(body as string, "utf8") : undefined;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: ProxyRequestOutcome) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const requestHeaders: Record<string, string> = {
+      "User-Agent": "recon-request-tool/1.0",
+      Accept: "*/*",
+      ...(headers ?? {}),
+      Host: hostname,
+    };
+    if (bodyBuffer) {
+      requestHeaders["Content-Length"] = String(bodyBuffer.length);
+    }
+
+    const requestOptions: http.RequestOptions & { servername?: string; rejectUnauthorized?: boolean } = {
+      host: ip,
+      port,
+      path: path.startsWith("/") ? path : `/${path}`,
+      method: normalizedMethod,
+      headers: requestHeaders,
+      timeout: NETWORK_TIMEOUT_MS,
+    };
+
+    if (useHttps) {
+      requestOptions.servername = hostname;
+      requestOptions.rejectUnauthorized = false;
+    }
+
+    const transport = useHttps ? https : http;
+    const req = transport.request(requestOptions, (res) => {
+      const chunks: Buffer[] = [];
+      let collected = 0;
+      let truncated = false;
+      res.on("data", (chunk: Buffer) => {
+        if (collected < PROXY_REQUEST_BODY_LIMIT_BYTES) {
+          const remaining = PROXY_REQUEST_BODY_LIMIT_BYTES - collected;
+          chunks.push(chunk.length > remaining ? chunk.subarray(0, remaining) : chunk);
+          collected += chunk.length;
+          if (collected >= PROXY_REQUEST_BODY_LIMIT_BYTES) {
+            truncated = true;
+          }
+        } else {
+          truncated = true;
+        }
+      });
+      res.on("end", () => {
+        const responseHeaders: Record<string, string> = {};
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (value === undefined) continue;
+          responseHeaders[key] = Array.isArray(value) ? value.join(", ") : String(value);
+        }
+        finish({
+          reachable: true,
+          statusCode: res.statusCode ?? null,
+          statusText: res.statusMessage ?? null,
+          responseTimeMs: Date.now() - startedAt,
+          headers: responseHeaders,
+          body: Buffer.concat(chunks).toString("utf8"),
+          bodyTruncated: truncated,
+          error: null,
+        });
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy();
+      finish({
+        reachable: false,
+        statusCode: null,
+        statusText: null,
+        responseTimeMs: null,
+        headers: {},
+        body: null,
+        bodyTruncated: false,
+        error: "Connection timed out.",
+      });
+    });
+
+    req.on("error", (err) => {
+      finish({
+        reachable: false,
+        statusCode: null,
+        statusText: null,
+        responseTimeMs: null,
+        headers: {},
+        body: null,
+        bodyTruncated: false,
+        error: err instanceof Error ? err.message : "Connection failed.",
+      });
+    });
+
+    if (bodyBuffer) {
+      req.write(bodyBuffer);
+    }
+    req.end();
+  });
+}
+
 export async function scanTarget(rawInput: string): Promise<ScanResult> {
   const hostname = extractHostname(rawInput);
 

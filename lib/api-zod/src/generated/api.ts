@@ -96,6 +96,38 @@ export const VerifyOriginResponse = zod.object({
 
 
 /**
+ * Connects directly to a candidate origin IP (bypassing DNS/CDN routing) and sends a fully custom HTTP request — method, path, headers, and body — with the target hostname spoofed in the Host header and TLS SNI. Returns the raw response from the backend so you can interact with it as if the CDN/proxy were not there.
+ * @summary Send a custom HTTP request directly to a candidate origin IP
+ */
+export const sendProxyRequestBodyPortDefault = 443;
+export const sendProxyRequestBodyUseHttpsDefault = true;
+export const sendProxyRequestBodyMethodDefault = `GET`;
+export const sendProxyRequestBodyPathDefault = `/`;
+
+export const SendProxyRequestBody = zod.object({
+  "hostname": zod.string().describe('The original target hostname to send as Host header \/ TLS SNI'),
+  "ip": zod.string().describe('The candidate origin IP to connect to directly'),
+  "port": zod.number().default(sendProxyRequestBodyPortDefault).describe('Port to connect on'),
+  "useHttps": zod.boolean().default(sendProxyRequestBodyUseHttpsDefault).describe('Whether to use TLS (HTTPS) for the direct connection'),
+  "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']).default(sendProxyRequestBodyMethodDefault),
+  "path": zod.string().default(sendProxyRequestBodyPathDefault).describe('Request path (and query string), e.g. \/api\/users?id=1'),
+  "headers": zod.record(zod.string(), zod.string()).optional().describe('Extra request headers to send (Host is always overridden with hostname)'),
+  "body": zod.string().nullish().describe('Raw request body to send (ignored for GET\/HEAD)')
+})
+
+export const SendProxyRequestResponse = zod.object({
+  "reachable": zod.boolean(),
+  "statusCode": zod.number().nullish(),
+  "statusText": zod.string().nullish(),
+  "responseTimeMs": zod.number().nullish(),
+  "headers": zod.record(zod.string(), zod.string()),
+  "body": zod.string().nullish(),
+  "bodyTruncated": zod.boolean(),
+  "error": zod.string().nullish()
+})
+
+
+/**
  * Returns server health status
  * @summary Health check
  */

@@ -3,6 +3,7 @@ import { ScanResult, CandidateOriginIp, CandidateOriginIpConfidence, DnsResolver
 import { Shield, ShieldAlert, ShieldCheck, Server, Globe, Lock, Mail, Database, ChevronRight, AlertCircle, Fingerprint, Zap, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import RequestTool from "@/components/RequestTool";
 
 export default function ScanResults({ result }: { result: ScanResult }) {
   const useHttps = result.sslCertificate && !result.sslCertificate.error;
@@ -368,6 +369,8 @@ function OriginIpCard({
             )}
           </div>
         )}
+
+        <RequestTool hostname={hostname} ip={candidate.ip} port={useHttps ? 443 : 80} useHttps={useHttps} />
       </div>
     </div>
   );

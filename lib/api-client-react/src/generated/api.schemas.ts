@@ -67,6 +67,55 @@ export interface ScanError {
   message: string;
 }
 
+export type ProxyRequestBodyMethod = typeof ProxyRequestBodyMethod[keyof typeof ProxyRequestBodyMethod];
+
+
+export const ProxyRequestBodyMethod = {
+  GET: 'GET',
+  POST: 'POST',
+  PUT: 'PUT',
+  PATCH: 'PATCH',
+  DELETE: 'DELETE',
+  HEAD: 'HEAD',
+  OPTIONS: 'OPTIONS',
+} as const;
+
+/**
+ * Extra request headers to send (Host is always overridden with hostname)
+ */
+export type ProxyRequestBodyHeaders = {[key: string]: string};
+
+export interface ProxyRequestBody {
+  /** The original target hostname to send as Host header / TLS SNI */
+  hostname: string;
+  /** The candidate origin IP to connect to directly */
+  ip: string;
+  /** Port to connect on */
+  port?: number;
+  /** Whether to use TLS (HTTPS) for the direct connection */
+  useHttps?: boolean;
+  method: ProxyRequestBodyMethod;
+  /** Request path (and query string), e.g. /api/users?id=1 */
+  path: string;
+  /** Extra request headers to send (Host is always overridden with hostname) */
+  headers?: ProxyRequestBodyHeaders;
+  /** Raw request body to send (ignored for GET/HEAD) */
+  body?: string | null;
+}
+
+export type ProxyRequestResultHeaders = {[key: string]: string};
+
+export interface ProxyRequestResult {
+  reachable: boolean;
+  statusCode?: number | null;
+  statusText?: string | null;
+  responseTimeMs?: number | null;
+  headers: ProxyRequestResultHeaders;
+  body?: string | null;
+  bodyTruncated: boolean;
+  error?: string | null;
+}
+
 export interface DnsResolverResult {
   resolver: string;
   addresses: string[];

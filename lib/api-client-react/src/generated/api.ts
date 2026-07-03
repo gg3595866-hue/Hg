@@ -23,6 +23,8 @@ import type {
   HealthStatus,
   OriginVerifyRequest,
   OriginVerifyResult,
+  ProxyRequestBody,
+  ProxyRequestResult,
   ScanError,
   ScanRequest,
   ScanResult
@@ -195,6 +197,77 @@ export const useVerifyOrigin = <TError = ErrorType<ScanError>,
         TContext
       > => {
       return useMutation(getVerifyOriginMutationOptions(options));
+    }
+
+export const getSendProxyRequestUrl = () => {
+
+
+
+
+  return `/api/proxy-request`
+}
+
+/**
+ * Connects directly to a candidate origin IP (bypassing DNS/CDN routing) and sends a fully custom HTTP request — method, path, headers, and body — with the target hostname spoofed in the Host header and TLS SNI. Returns the raw response from the backend so you can interact with it as if the CDN/proxy were not there.
+ * @summary Send a custom HTTP request directly to a candidate origin IP
+ */
+export const sendProxyRequest = async (proxyRequestBody: ProxyRequestBody, options?: RequestInit): Promise<ProxyRequestResult> => {
+
+  return customFetch<ProxyRequestResult>(getSendProxyRequestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(proxyRequestBody)
+  }
+);}
+
+
+
+
+export const getSendProxyRequestMutationOptions = <TError = ErrorType<ScanError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendProxyRequest>>, TError,{data: BodyType<ProxyRequestBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendProxyRequest>>, TError,{data: BodyType<ProxyRequestBody>}, TContext> => {
+
+const mutationKey = ['sendProxyRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendProxyRequest>>, {data: BodyType<ProxyRequestBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  sendProxyRequest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendProxyRequestMutationResult = NonNullable<Awaited<ReturnType<typeof sendProxyRequest>>>
+    export type SendProxyRequestMutationBody = BodyType<ProxyRequestBody>
+    export type SendProxyRequestMutationError = ErrorType<ScanError>
+
+    /**
+ * @summary Send a custom HTTP request directly to a candidate origin IP
+ */
+export const useSendProxyRequest = <TError = ErrorType<ScanError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendProxyRequest>>, TError,{data: BodyType<ProxyRequestBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendProxyRequest>>,
+        TError,
+        {data: BodyType<ProxyRequestBody>},
+        TContext
+      > => {
+      return useMutation(getSendProxyRequestMutationOptions(options));
     }
 
 export const getHealthCheckUrl = () => {
