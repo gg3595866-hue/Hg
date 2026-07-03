@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSendProxyRequest, ProxyRequestResult, ProxyRequestBodyMethod } from "@workspace/api-client-react";
-import { Send, Loader2, XCircle, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import { Send, Loader2, XCircle, ChevronDown, ChevronUp, Copy, Check, ClipboardPaste, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,8 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { parseFetchSnippet, parseCurlSnippet } from "@/lib/parseFetchSnippet";
 
 const METHODS: ProxyRequestBodyMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+const IGNORED_IMPORT_HEADERS = new Set(["content-length", "host", "connection"]);
 
 export default function RequestTool({
   hostname,
@@ -31,9 +34,47 @@ export default function RequestTool({
   const [headersText, setHeadersText] = useState("");
   const [body, setBody] = useState("");
   const [copied, setCopied] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState(false);
 
   const mutation = useSendProxyRequest();
   const result = mutation.data as ProxyRequestResult | undefined;
+
+  const handleImport = () => {
+    setImportError(null);
+    setImportSuccess(false);
+    if (!importText.trim()) return;
+
+    const parsed = parseFetchSnippet(importText) ?? parseCurlSnippet(importText);
+    if (!parsed) {
+      setImportError("Couldn't recognize that as a fetch() call or curl command. Paste the full snippet, including headers and body.");
+      return;
+    }
+
+    let parsedPath = "/";
+    try {
+      const parsedUrl = new URL(parsed.url);
+      parsedPath = parsedUrl.pathname + parsedUrl.search;
+    } catch {
+      parsedPath = parsed.url.startsWith("/") ? parsed.url : `/${parsed.url}`;
+    }
+
+    const validMethod = METHODS.includes(parsed.method as ProxyRequestBodyMethod)
+      ? (parsed.method as ProxyRequestBodyMethod)
+      : "GET";
+
+    const filteredHeaders = Object.entries(parsed.headers).filter(
+      ([k]) => !IGNORED_IMPORT_HEADERS.has(k.toLowerCase()),
+    );
+
+    setMethod(validMethod);
+    setPath(parsedPath);
+    setHeadersText(filteredHeaders.map(([k, v]) => `${k}: ${v}`).join("\n"));
+    setBody(parsed.body ?? "");
+    setImportSuccess(true);
+    setTimeout(() => setImportSuccess(false), 2000);
+  };
 
   const parseHeaders = (): Record<string, string> | undefined => {
     const lines = headersText.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -89,6 +130,45 @@ export default function RequestTool({
 
       {open && (
         <div className="flex flex-col gap-3 bg-secondary/20 border border-border/50 p-3">
+          <div className="flex flex-col gap-2 border-b border-border/50 pb-3">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              Paste a fetch() call or curl command (from DevTools "Copy as fetch")
+            </div>
+            <Textarea
+              placeholder={'fetch("https://example.com/api/thing", { method: "POST", headers: {...}, body: "..." })'}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              className="font-mono text-xs min-h-[70px] rounded-none bg-card"
+            />
+            <div className="flex items-center gap-3">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="rounded-none uppercase text-xs tracking-wider font-bold self-start"
+                onClick={handleImport}
+                disabled={!importText.trim()}
+              >
+                <span className="flex items-center gap-2">
+                  <ClipboardPaste className="w-3.5 h-3.5" />
+                  Parse &amp; Fill Fields
+                </span>
+              </Button>
+              {importSuccess && (
+                <span className="text-xs text-primary flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Parsed successfully
+                </span>
+              )}
+            </div>
+            {importError && (
+              <div className="text-xs text-destructive flex items-start gap-2">
+                <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                {importError}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-2">
             <Select value={method} onValueChange={(v) => setMethod(v as ProxyRequestBodyMethod)}>
               <SelectTrigger className="w-[110px] rounded-none font-mono text-xs">
