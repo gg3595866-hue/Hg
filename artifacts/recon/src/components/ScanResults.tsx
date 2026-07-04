@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ScanResult, CandidateOriginIp, CandidateOriginIpConfidence, DnsResolverResult, SslCertificateInfo, SubdomainRecord, useVerifyOrigin, OriginVerifyResult } from "@workspace/api-client-react";
-import { Shield, ShieldAlert, ShieldCheck, Server, Globe, Lock, Mail, Database, ChevronRight, AlertCircle, Fingerprint, Zap, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Shield, ShieldAlert, ShieldCheck, Server, Globe, Lock, Mail, Database, ChevronRight, AlertCircle, Fingerprint, Zap, CheckCircle2, XCircle, Loader2, Puzzle, LinkIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import RequestTool from "@/components/RequestTool";
@@ -28,6 +28,11 @@ export default function ScanResults({ result }: { result: ScanResult }) {
               </Badge>
             )}
           </div>
+          {result.requestedPath && result.requestedPath !== "/" && (
+            <div className="text-xs font-mono text-muted-foreground mt-1 break-all">
+              Path analyzed: <span className="text-foreground">{result.requestedPath}</span>
+            </div>
+          )}
         </div>
         
         {result.cdnDetected && result.cdnProvider && (
@@ -37,6 +42,96 @@ export default function ScanResults({ result }: { result: ScanResult }) {
           </div>
         )}
       </section>
+
+      {/* Embedded / Third-Party Providers found on the exact path requested */}
+      {result.pageAnalysis && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold uppercase tracking-wider border-b border-border pb-2 flex items-center gap-2">
+            <Puzzle className="w-5 h-5 text-primary" />
+            Embedded / Third-Party Providers
+          </h2>
+          <p className="text-xs text-muted-foreground max-w-3xl">
+            DNS and CDN analysis only ever sees the hostname (<span className="font-mono">{result.hostname}</span>) — it cannot tell that
+            a specific path is actually served or powered by a completely different backend. This section fetches the exact URL you
+            submitted and looks for other domains referenced in its response (iframes, scripts, API hosts, cookies) — this is how a
+            game/service provider embedded under the main site's domain (e.g. a games platform like 1xGames living inside a betting
+            site's pages) can be surfaced.
+          </p>
+
+          {result.pageAnalysis.error ? (
+            <div className="p-4 bg-destructive/10 border border-destructive/50 text-destructive text-sm flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              Could not fetch <span className="font-mono">{result.pageAnalysis.fetchedUrl}</span>: {result.pageAnalysis.error}
+            </div>
+          ) : (
+            <>
+              <div className="bg-card border border-border p-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <div className="text-muted-foreground uppercase tracking-wider mb-1">Status</div>
+                  <div className="font-mono text-foreground">{result.pageAnalysis.statusCode ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground uppercase tracking-wider mb-1">Content-Type</div>
+                  <div className="font-mono text-foreground break-all">{result.pageAnalysis.contentType ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground uppercase tracking-wider mb-1">Server</div>
+                  <div className="font-mono text-foreground break-all">{result.pageAnalysis.serverHeader ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground uppercase tracking-wider mb-1">X-Powered-By</div>
+                  <div className="font-mono text-foreground break-all">{result.pageAnalysis.poweredByHeader ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground uppercase tracking-wider mb-1">Via</div>
+                  <div className="font-mono text-foreground break-all">{result.pageAnalysis.viaHeader ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground uppercase tracking-wider mb-1">Cookie Domains</div>
+                  <div className="font-mono text-foreground break-all">
+                    {result.pageAnalysis.setCookieDomains.length > 0
+                      ? result.pageAnalysis.setCookieDomains.join(", ")
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {result.pageAnalysis.embeddedProviders.length === 0 ? (
+                <div className="p-6 text-center bg-card border border-border/50 text-muted-foreground border-dashed text-sm">
+                  No distinct third-party domains found referenced in this response. The requested path appears to be served
+                  entirely by {result.hostname} itself (or the response is minified/obfuscated JS the scanner can't parse).
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {result.pageAnalysis.embeddedProviders.map((provider, i) => (
+                    <div key={i} className="bg-card border border-primary/40 p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-base font-bold text-primary break-all">{provider.domain}</span>
+                        <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider shrink-0">
+                          {provider.occurrences}x
+                        </Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {provider.sources.map((src, j) => (
+                          <span key={j} className="text-[10px] bg-secondary px-1.5 py-0.5 flex items-center gap-1 font-mono">
+                            <LinkIcon className="w-2.5 h-2.5 text-muted-foreground" />
+                            {src}
+                          </span>
+                        ))}
+                      </div>
+                      {provider.sampleContext && (
+                        <div className="font-mono text-[10px] text-muted-foreground break-all bg-secondary/30 p-2 border border-border/30">
+                          {provider.sampleContext}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       {/* Edge IP Details */}
       {result.edgeIpDetails && result.edgeIpDetails.length > 0 && (

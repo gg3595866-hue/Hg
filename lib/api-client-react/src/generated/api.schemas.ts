@@ -162,9 +162,39 @@ export interface IpDetails {
   location?: string | null;
 }
 
+export interface SensitiveEndpointProbe {
+  path: string;
+  url: string;
+  reachable: boolean;
+  statusCode: number | null;
+  found: boolean;
+  error: string | null;
+}
+
+export interface EmbeddedProvider {
+  domain: string;
+  occurrences: number;
+  sources: string[];
+  sampleContext: string | null;
+}
+
+export interface PageAnalysis {
+  fetchedUrl: string;
+  reachable: boolean;
+  statusCode: number | null;
+  contentType: string | null;
+  serverHeader: string | null;
+  poweredByHeader: string | null;
+  viaHeader: string | null;
+  setCookieDomains: string[];
+  embeddedProviders: EmbeddedProvider[];
+  error: string | null;
+}
+
 export interface ScanResult {
   originalInput: string;
   hostname: string;
+  requestedPath: string;
   cdnDetected: boolean;
   cdnProvider: string | null;
   edgeIps: string[];
@@ -176,6 +206,8 @@ export interface ScanResult {
   subdomains: SubdomainRecord[];
   candidateOriginIps: CandidateOriginIp[];
   edgeIpDetails: IpDetails[];
+  pageAnalysis: PageAnalysis;
+  sensitiveEndpoints?: SensitiveEndpointProbe[];
   scannedAt: string;
 }
 

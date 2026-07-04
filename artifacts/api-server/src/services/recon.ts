@@ -361,14 +361,29 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-export function extractHostname(rawInput: string): string {
+export type TargetDetails = {
+  hostname: string;
+  path: string;
+  useHttps: boolean;
+};
+
+/**
+ * Extracts both the hostname AND the request path/query from the raw input.
+ * This matters because the same hostname can route different paths to
+ * completely different backends at the application layer (e.g. a betting
+ * site's main pages vs. a `/games-frame/service-api/...` path that is
+ * actually served by a third-party game provider). DNS/CDN-level analysis
+ * alone cannot see that distinction — it only ever "sees" the hostname.
+ */
+export function extractTargetDetails(rawInput: string): TargetDetails {
   const input = rawInput.trim();
   if (!input) {
     throw new Error("Input is empty.");
   }
 
-  const httpMethodMatch = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)\s+\S+\s+HTTP\/\d(\.\d)?/i;
-  if (httpMethodMatch.test(input)) {
+  const httpMethodMatch = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)\s+(\S+)\s+HTTP\/\d(\.\d)?/i;
+  const httpMethodExec = httpMethodMatch.exec(input);
+  if (httpMethodExec) {
     const hostHeaderMatch = input.match(/^Host:\s*(.+)$/im);
     if (!hostHeaderMatch || !hostHeaderMatch[1]) {
       throw new Error("Raw HTTP request did not contain a Host header.");
@@ -378,7 +393,12 @@ export function extractHostname(rawInput: string): string {
     if (!hostname) {
       throw new Error("Could not parse hostname from Host header.");
     }
-    return hostname.toLowerCase();
+    const requestTarget = httpMethodExec[2] || "/";
+    return {
+      hostname: hostname.toLowerCase(),
+      path: requestTarget.startsWith("/") ? requestTarget : `/${requestTarget}`,
+      useHttps: true,
+    };
   }
 
   // JS fetch()/axios/curl-style snippets: pull the first quoted http(s) URL out of the blob.
@@ -389,7 +409,11 @@ export function extractHostname(rawInput: string): string {
       try {
         const url = new URL(urlMatch[1]);
         if (url.hostname) {
-          return url.hostname.toLowerCase();
+          return {
+            hostname: url.hostname.toLowerCase(),
+            path: `${url.pathname}${url.search}` || "/",
+            useHttps: url.protocol === "https:",
+          };
         }
       } catch {
         // fall through to generic parsing below
@@ -407,12 +431,20 @@ export function extractHostname(rawInput: string): string {
     if (!url.hostname) {
       throw new Error("No hostname found in URL.");
     }
-    return url.hostname.toLowerCase();
+    return {
+      hostname: url.hostname.toLowerCase(),
+      path: `${url.pathname}${url.search}` || "/",
+      useHttps: url.protocol === "https:",
+    };
   } catch {
     throw new Error(
       "Could not parse a hostname from the input. Provide a URL (e.g. https://example.com) or a raw HTTP request with a Host header.",
     );
   }
+}
+
+export function extractHostname(rawInput: string): string {
+  return extractTargetDetails(rawInput).hostname;
 }
 
 async function queryDohResolver(
@@ -1200,8 +1232,196 @@ export function sendProxyRequest(options: ProxyRequestOptions): Promise<ProxyReq
   });
 }
 
+const PAGE_ANALYSIS_BODY_LIMIT_BYTES = 1_500_000; // 1.5MB, enough for most HTML/JSON payloads
+
+// Infra/CDN/tracking domains that show up on almost every site and are noise
+// for the purpose of finding a *distinct backend provider*.
+const EMBEDDED_PROVIDER_NOISE_SUFFIXES = [
+  "googleapis.com",
+  "gstatic.com",
+  "google.com",
+  "google-analytics.com",
+  "googletagmanager.com",
+  "doubleclick.net",
+  "facebook.com",
+  "facebook.net",
+  "cloudflare.com",
+  "cloudflareinsights.com",
+  "jsdelivr.net",
+  "cdnjs.cloudflare.com",
+  "fontawesome.com",
+  "gravatar.com",
+  "w3.org",
+  "schema.org",
+  "sentry.io",
+  "recaptcha.net",
+];
+
+function isNoiseDomain(domain: string, rootHostname: string): boolean {
+  if (domain === rootHostname || domain.endsWith(`.${rootHostname}`) || rootHostname.endsWith(`.${domain}`)) {
+    return true;
+  }
+  return EMBEDDED_PROVIDER_NOISE_SUFFIXES.some((suffix) => domain === suffix || domain.endsWith(`.${suffix}`));
+}
+
+/**
+ * Fetches the EXACT path the user pasted (not just the hostname root) and
+ * inspects the live response for signs that it is actually served by a
+ * different backend/provider than the main site — e.g. a `Server` header
+ * that doesn't match the main site, or other domains referenced inside the
+ * JSON/HTML body (game asset CDNs, iframe sources, provider API hosts).
+ * This is what lets the tool tell "1xbet.com the website" apart from
+ * "1xgames, the third party actually serving /games-frame/service-api/...".
+ */
+export async function analyzePageForEmbeddedProviders(
+  hostname: string,
+  path: string,
+  useHttps: boolean,
+): Promise<{
+  fetchedUrl: string;
+  reachable: boolean;
+  statusCode: number | null;
+  contentType: string | null;
+  serverHeader: string | null;
+  poweredByHeader: string | null;
+  viaHeader: string | null;
+  setCookieDomains: string[];
+  embeddedProviders: { domain: string; occurrences: number; sources: string[]; sampleContext: string | null }[];
+  error: string | null;
+}> {
+  const scheme = useHttps ? "https" : "http";
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const fetchedUrl = `${scheme}://${hostname}${normalizedPath}`;
+
+  try {
+    const res = await fetch(fetchedUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "*/*",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000),
+    });
+
+    const contentType = res.headers.get("content-type");
+    const serverHeader = res.headers.get("server");
+    const poweredByHeader = res.headers.get("x-powered-by");
+    const viaHeader = res.headers.get("via");
+
+    const setCookieDomains = new Set<string>();
+    const setCookieHeader =
+      typeof (res.headers as any).getSetCookie === "function"
+        ? ((res.headers as any).getSetCookie() as string[])
+        : res.headers.get("set-cookie")
+          ? [res.headers.get("set-cookie") as string]
+          : [];
+    for (const cookie of setCookieHeader) {
+      const domainMatch = /domain=([^;]+)/i.exec(cookie);
+      if (domainMatch && domainMatch[1]) {
+        setCookieDomains.add(domainMatch[1].trim().replace(/^\./, "").toLowerCase());
+      }
+    }
+
+    const buffer = await res.arrayBuffer();
+    const truncated = buffer.byteLength > PAGE_ANALYSIS_BODY_LIMIT_BYTES;
+    const body = Buffer.from(
+      truncated ? buffer.slice(0, PAGE_ANALYSIS_BODY_LIMIT_BYTES) : buffer,
+    ).toString("utf8");
+
+    const domainHits = new Map<string, { count: number; sources: Set<string>; sample: string | null }>();
+
+    const recordHit = (domain: string, source: string, context: string | null) => {
+      const clean = domain.toLowerCase().replace(/^\.+/, "");
+      if (!clean || isNoiseDomain(clean, hostname)) return;
+      const existing = domainHits.get(clean);
+      if (existing) {
+        existing.count += 1;
+        existing.sources.add(source);
+        if (!existing.sample && context) existing.sample = context;
+      } else {
+        domainHits.set(clean, { count: 1, sources: new Set([source]), sample: context });
+      }
+    };
+
+    for (const domain of setCookieDomains) {
+      recordHit(domain, "Set-Cookie domain", null);
+    }
+
+    const iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
+    let match: RegExpExecArray | null;
+    while ((match = iframeRegex.exec(body)) !== null) {
+      try {
+        const url = new URL(match[1], fetchedUrl);
+        recordHit(url.hostname, "<iframe> src", match[0].slice(0, 200));
+      } catch {
+        // ignore unparsable src (relative/data URIs etc.)
+      }
+    }
+
+    const scriptRegex = /<script[^>]+src=["']([^"']+)["']/gi;
+    while ((match = scriptRegex.exec(body)) !== null) {
+      try {
+        const url = new URL(match[1], fetchedUrl);
+        recordHit(url.hostname, "<script> src", match[0].slice(0, 200));
+      } catch {
+        // ignore
+      }
+    }
+
+    // Absolute URLs referenced anywhere in HTML/JSON/JS (API endpoints, asset
+    // CDNs, provider hosts embedded in inline scripts or JSON payloads).
+    const urlRegex = /https?:\/\/([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?=[/"'\s?)])/gi;
+    while ((match = urlRegex.exec(body)) !== null) {
+      try {
+        const url = new URL(match[0]);
+        recordHit(url.hostname, "Referenced URL in response body", null);
+      } catch {
+        // ignore
+      }
+    }
+
+    const embeddedProviders = Array.from(domainHits.entries())
+      .map(([domain, info]) => ({
+        domain,
+        occurrences: info.count,
+        sources: Array.from(info.sources),
+        sampleContext: info.sample,
+      }))
+      .sort((a, b) => b.occurrences - a.occurrences)
+      .slice(0, 20);
+
+    return {
+      fetchedUrl,
+      reachable: true,
+      statusCode: res.status,
+      contentType,
+      serverHeader,
+      poweredByHeader,
+      viaHeader,
+      setCookieDomains: Array.from(setCookieDomains),
+      embeddedProviders,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      fetchedUrl,
+      reachable: false,
+      statusCode: null,
+      contentType: null,
+      serverHeader: null,
+      poweredByHeader: null,
+      viaHeader: null,
+      setCookieDomains: [],
+      embeddedProviders: [],
+      error: err instanceof Error ? err.message : "Failed to fetch the requested path.",
+    };
+  }
+}
+
 export async function scanTarget(rawInput: string): Promise<ScanResult> {
-  const hostname = extractHostname(rawInput);
+  const { hostname, path, useHttps: requestedUseHttps } = extractTargetDetails(rawInput);
 
   const [dnsResults, sslCertificate, mxRecords, mxHosts, txtRecords, cnames, crtShHosts, certSpotterHosts] =
     await Promise.all([
@@ -1220,7 +1440,10 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
     ]);
 
   const useHttpsForProbes = !sslCertificate.error;
-  const sensitiveEndpoints = await probeSensitiveEndpoints(hostname, useHttpsForProbes);
+  const [sensitiveEndpoints, pageAnalysis] = await Promise.all([
+    probeSensitiveEndpoints(hostname, useHttpsForProbes),
+    analyzePageForEmbeddedProviders(hostname, path, requestedUseHttps),
+  ]);
 
   const bruteForceHosts = COMMON_SUBDOMAIN_WORDLIST.map((word) => `${word}.${hostname}`);
   const mxExchangeHosts = mxHosts
@@ -1269,6 +1492,7 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
   return {
     originalInput: rawInput,
     hostname,
+    requestedPath: path,
     cdnDetected,
     cdnProvider,
     edgeIps: Array.from(edgeIps),
@@ -1280,6 +1504,7 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
     txtRecords,
     subdomains,
     candidateOriginIps,
+    pageAnalysis,
     sensitiveEndpoints,
     scannedAt: new Date().toISOString(),
   };

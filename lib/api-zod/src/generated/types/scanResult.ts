@@ -8,12 +8,15 @@
 import type { CandidateOriginIp } from './candidateOriginIp';
 import type { DnsResolverResult } from './dnsResolverResult';
 import type { IpDetails } from './ipDetails';
+import type { PageAnalysis } from './pageAnalysis';
+import type { SensitiveEndpointProbe } from './sensitiveEndpointProbe';
 import type { SslCertificateInfo } from './sslCertificateInfo';
 import type { SubdomainRecord } from './subdomainRecord';
 
 export interface ScanResult {
   originalInput: string;
   hostname: string;
+  requestedPath: string;
   cdnDetected: boolean;
   cdnProvider: string | null;
   edgeIps: string[];
@@ -25,5 +28,7 @@ export interface ScanResult {
   subdomains: SubdomainRecord[];
   candidateOriginIps: CandidateOriginIp[];
   edgeIpDetails: IpDetails[];
+  pageAnalysis: PageAnalysis;
+  sensitiveEndpoints?: SensitiveEndpointProbe[];
   scannedAt: string;
 }

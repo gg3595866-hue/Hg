@@ -19,6 +19,7 @@ export const ScanTargetBody = zod.object({
 export const ScanTargetResponse = zod.object({
   "originalInput": zod.string(),
   "hostname": zod.string(),
+  "requestedPath": zod.string(),
   "cdnDetected": zod.boolean(),
   "cdnProvider": zod.string().nullable(),
   "edgeIps": zod.array(zod.string()),
@@ -55,6 +56,31 @@ export const ScanTargetResponse = zod.object({
   "org": zod.string().nullish(),
   "location": zod.string().nullish()
 })),
+  "pageAnalysis": zod.object({
+  "fetchedUrl": zod.string(),
+  "reachable": zod.boolean(),
+  "statusCode": zod.number().nullable(),
+  "contentType": zod.string().nullable(),
+  "serverHeader": zod.string().nullable(),
+  "poweredByHeader": zod.string().nullable(),
+  "viaHeader": zod.string().nullable(),
+  "setCookieDomains": zod.array(zod.string()),
+  "embeddedProviders": zod.array(zod.object({
+  "domain": zod.string(),
+  "occurrences": zod.number(),
+  "sources": zod.array(zod.string()),
+  "sampleContext": zod.string().nullable()
+})),
+  "error": zod.string().nullable()
+}),
+  "sensitiveEndpoints": zod.array(zod.object({
+  "path": zod.string(),
+  "url": zod.string(),
+  "reachable": zod.boolean(),
+  "statusCode": zod.number().nullable(),
+  "found": zod.boolean(),
+  "error": zod.string().nullable()
+})).optional(),
   "scannedAt": zod.string()
 })
 

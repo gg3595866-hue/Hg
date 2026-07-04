@@ -385,12 +385,101 @@ components:
           nullable: true
       required:
         - ip
+    SensitiveEndpointProbe:
+      type: object
+      properties:
+        path:
+          type: string
+        url:
+          type: string
+        reachable:
+          type: boolean
+        statusCode:
+          type: number
+          nullable: true
+        found:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+      required:
+        - path
+        - url
+        - reachable
+        - statusCode
+        - found
+        - error
+    EmbeddedProvider:
+      type: object
+      properties:
+        domain:
+          type: string
+        occurrences:
+          type: number
+        sources:
+          type: array
+          items:
+            type: string
+        sampleContext:
+          type: string
+          nullable: true
+      required:
+        - domain
+        - occurrences
+        - sources
+        - sampleContext
+    PageAnalysis:
+      type: object
+      properties:
+        fetchedUrl:
+          type: string
+        reachable:
+          type: boolean
+        statusCode:
+          type: number
+          nullable: true
+        contentType:
+          type: string
+          nullable: true
+        serverHeader:
+          type: string
+          nullable: true
+        poweredByHeader:
+          type: string
+          nullable: true
+        viaHeader:
+          type: string
+          nullable: true
+        setCookieDomains:
+          type: array
+          items:
+            type: string
+        embeddedProviders:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmbeddedProvider"
+        error:
+          type: string
+          nullable: true
+      required:
+        - fetchedUrl
+        - reachable
+        - statusCode
+        - contentType
+        - serverHeader
+        - poweredByHeader
+        - viaHeader
+        - setCookieDomains
+        - embeddedProviders
+        - error
     ScanResult:
       type: object
       properties:
         originalInput:
           type: string
         hostname:
+          type: string
+        requestedPath:
           type: string
         cdnDetected:
           type: boolean
@@ -430,11 +519,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/IpDetails"
+        pageAnalysis:
+          $ref: "#/components/schemas/PageAnalysis"
+        sensitiveEndpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveEndpointProbe"
         scannedAt:
           type: string
       required:
         - originalInput
         - hostname
+        - requestedPath
         - cdnDetected
         - cdnProvider
         - edgeIps
@@ -446,5 +542,6 @@ components:
         - subdomains
         - candidateOriginIps
         - edgeIpDetails
+        - pageAnalysis
         - scannedAt
 
