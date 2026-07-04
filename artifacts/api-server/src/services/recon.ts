@@ -1264,6 +1264,54 @@ function isNoiseDomain(domain: string, rootHostname: string): boolean {
   return EMBEDDED_PROVIDER_NOISE_SUFFIXES.some((suffix) => domain === suffix || domain.endsWith(`.${suffix}`));
 }
 
+// Path/extension patterns typical of static frontend assets (JS/CSS bundles,
+// fonts, images, i18n dictionaries, version manifests) served off a CDN —
+// these are NOT the backend that processes requests, just files the browser
+// downloads. Distinguishing this from a real API/backend host is the whole
+// point of classification: a domain serving only `*.js`/`*.css`/`version.json`
+// is an asset CDN, not "the provider actually running the game/bet logic".
+const STATIC_ASSET_PATH_PATTERNS = [
+  /\.(js|mjs|css|map)(\?|$)/i,
+  /\.(png|jpe?g|gif|svg|webp|ico|avif)(\?|$)/i,
+  /\.(woff2?|ttf|eot|otf)(\?|$)/i,
+  /\.(mp3|mp4|webm|ogg)(\?|$)/i,
+  /\/(main-static|sys-static|static|assets|genfiles|dist|build)\//i,
+  /\/version\.json(\?|$)/i,
+  /\.json(\?|$)/i, // generic JSON dictionaries/locale files served alongside the above are usually static too, but is de-prioritized vs API path hints below
+];
+
+// Path patterns that indicate a real API/backend/game-logic endpoint rather
+// than a static file — these override the static-asset classification even
+// if the URL also happens to end in `.json`.
+const API_BACKEND_PATH_PATTERNS = [
+  /\/api\//i,
+  /\/service-api\//i,
+  /\/graphql/i,
+  /\bws:\/\/|wss:\/\//i,
+  /\/socket\.io/i,
+  /\/(ws|websocket)\//i,
+  /\/(auth|login|session|bet|wager|game-engine|gameengine|notifications?)\//i,
+];
+
+function classifyProviderPath(matchedUrl: string): "static-asset-cdn" | "api-or-backend" | "unknown" {
+  if (API_BACKEND_PATH_PATTERNS.some((re) => re.test(matchedUrl))) return "api-or-backend";
+  if (STATIC_ASSET_PATH_PATTERNS.some((re) => re.test(matchedUrl))) return "static-asset-cdn";
+  return "unknown";
+}
+
+function classifyProvider(matchedUrls: string[]): "static-asset-cdn" | "api-or-backend" | "unknown" {
+  if (matchedUrls.length === 0) return "unknown";
+  const classifications = matchedUrls.map(classifyProviderPath);
+  // Any single API/backend-looking hit is enough to flag the domain as a
+  // real backend, even if most other requests to it are static assets.
+  if (classifications.some((c) => c === "api-or-backend")) return "api-or-backend";
+  // Otherwise, if we have ANY static-asset signal (and no backend signal),
+  // treat it as a static-asset CDN — a bare/no-path reference alongside real
+  // `.css`/`.js` hits shouldn't dilute that classification down to "unknown".
+  if (classifications.some((c) => c === "static-asset-cdn")) return "static-asset-cdn";
+  return "unknown";
+}
+
 /**
  * Fetches the EXACT path the user pasted (not just the hostname root) and
  * inspects the live response for signs that it is actually served by a
@@ -1286,7 +1334,14 @@ export async function analyzePageForEmbeddedProviders(
   poweredByHeader: string | null;
   viaHeader: string | null;
   setCookieDomains: string[];
-  embeddedProviders: { domain: string; occurrences: number; sources: string[]; sampleContext: string | null }[];
+  embeddedProviders: {
+    domain: string;
+    occurrences: number;
+    sources: string[];
+    sampleContext: string | null;
+    providerType: "static-asset-cdn" | "api-or-backend" | "unknown";
+    matchedPaths: string[];
+  }[];
   error: string | null;
 }> {
   const scheme = useHttps ? "https" : "http";
@@ -1330,9 +1385,12 @@ export async function analyzePageForEmbeddedProviders(
       truncated ? buffer.slice(0, PAGE_ANALYSIS_BODY_LIMIT_BYTES) : buffer,
     ).toString("utf8");
 
-    const domainHits = new Map<string, { count: number; sources: Set<string>; sample: string | null }>();
+    const domainHits = new Map<
+      string,
+      { count: number; sources: Set<string>; sample: string | null; paths: Set<string> }
+    >();
 
-    const recordHit = (domain: string, source: string, context: string | null) => {
+    const recordHit = (domain: string, source: string, context: string | null, matchedUrl: string | null) => {
       const clean = domain.toLowerCase().replace(/^\.+/, "");
       if (!clean || isNoiseDomain(clean, hostname)) return;
       const existing = domainHits.get(clean);
@@ -1340,13 +1398,19 @@ export async function analyzePageForEmbeddedProviders(
         existing.count += 1;
         existing.sources.add(source);
         if (!existing.sample && context) existing.sample = context;
+        if (matchedUrl) existing.paths.add(matchedUrl);
       } else {
-        domainHits.set(clean, { count: 1, sources: new Set([source]), sample: context });
+        domainHits.set(clean, {
+          count: 1,
+          sources: new Set([source]),
+          sample: context,
+          paths: new Set(matchedUrl ? [matchedUrl] : []),
+        });
       }
     };
 
     for (const domain of setCookieDomains) {
-      recordHit(domain, "Set-Cookie domain", null);
+      recordHit(domain, "Set-Cookie domain", null, null);
     }
 
     const iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
@@ -1354,7 +1418,7 @@ export async function analyzePageForEmbeddedProviders(
     while ((match = iframeRegex.exec(body)) !== null) {
       try {
         const url = new URL(match[1], fetchedUrl);
-        recordHit(url.hostname, "<iframe> src", match[0].slice(0, 200));
+        recordHit(url.hostname, "<iframe> src", match[0].slice(0, 200), url.toString());
       } catch {
         // ignore unparsable src (relative/data URIs etc.)
       }
@@ -1364,7 +1428,7 @@ export async function analyzePageForEmbeddedProviders(
     while ((match = scriptRegex.exec(body)) !== null) {
       try {
         const url = new URL(match[1], fetchedUrl);
-        recordHit(url.hostname, "<script> src", match[0].slice(0, 200));
+        recordHit(url.hostname, "<script> src", match[0].slice(0, 200), url.toString());
       } catch {
         // ignore
       }
@@ -1372,24 +1436,35 @@ export async function analyzePageForEmbeddedProviders(
 
     // Absolute URLs referenced anywhere in HTML/JSON/JS (API endpoints, asset
     // CDNs, provider hosts embedded in inline scripts or JSON payloads).
-    const urlRegex = /https?:\/\/([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?=[/"'\s?)])/gi;
+    const urlRegex =
+      /https?:\/\/([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?:\/[^\s"'<>)]*)?/gi;
     while ((match = urlRegex.exec(body)) !== null) {
       try {
         const url = new URL(match[0]);
-        recordHit(url.hostname, "Referenced URL in response body", null);
+        recordHit(url.hostname, "Referenced URL in response body", null, match[0]);
       } catch {
         // ignore
       }
     }
 
     const embeddedProviders = Array.from(domainHits.entries())
-      .map(([domain, info]) => ({
-        domain,
-        occurrences: info.count,
-        sources: Array.from(info.sources),
-        sampleContext: info.sample,
-      }))
-      .sort((a, b) => b.occurrences - a.occurrences)
+      .map(([domain, info]) => {
+        const matchedPaths = Array.from(info.paths).slice(0, 10);
+        return {
+          domain,
+          occurrences: info.count,
+          sources: Array.from(info.sources),
+          sampleContext: info.sample,
+          providerType: classifyProvider(matchedPaths),
+          matchedPaths,
+        };
+      })
+      .sort((a, b) => {
+        const priority = { "api-or-backend": 2, unknown: 1, "static-asset-cdn": 0 } as const;
+        const priorityDiff = priority[b.providerType] - priority[a.providerType];
+        if (priorityDiff !== 0) return priorityDiff;
+        return b.occurrences - a.occurrences;
+      })
       .slice(0, 20);
 
     return {

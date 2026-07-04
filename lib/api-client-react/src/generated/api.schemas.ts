@@ -171,11 +171,22 @@ export interface SensitiveEndpointProbe {
   error: string | null;
 }
 
+export type EmbeddedProviderProviderType = typeof EmbeddedProviderProviderType[keyof typeof EmbeddedProviderProviderType];
+
+
+export const EmbeddedProviderProviderType = {
+  'static-asset-cdn': 'static-asset-cdn',
+  'api-or-backend': 'api-or-backend',
+  unknown: 'unknown',
+} as const;
+
 export interface EmbeddedProvider {
   domain: string;
   occurrences: number;
   sources: string[];
   sampleContext: string | null;
+  providerType: EmbeddedProviderProviderType;
+  matchedPaths: string[];
 }
 
 export interface PageAnalysis {

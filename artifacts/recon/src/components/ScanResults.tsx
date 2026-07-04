@@ -102,31 +102,82 @@ export default function ScanResults({ result }: { result: ScanResult }) {
                   entirely by {result.hostname} itself (or the response is minified/obfuscated JS the scanner can't parse).
                 </div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {result.pageAnalysis.embeddedProviders.map((provider, i) => (
-                    <div key={i} className="bg-card border border-primary/40 p-4 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-base font-bold text-primary break-all">{provider.domain}</span>
-                        <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider shrink-0">
-                          {provider.occurrences}x
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {provider.sources.map((src, j) => (
-                          <span key={j} className="text-[10px] bg-secondary px-1.5 py-0.5 flex items-center gap-1 font-mono">
-                            <LinkIcon className="w-2.5 h-2.5 text-muted-foreground" />
-                            {src}
-                          </span>
-                        ))}
-                      </div>
-                      {provider.sampleContext && (
-                        <div className="font-mono text-[10px] text-muted-foreground break-all bg-secondary/30 p-2 border border-border/30">
-                          {provider.sampleContext}
+                <>
+                  {result.pageAnalysis.embeddedProviders.some((p) => p.providerType === "api-or-backend") && (
+                    <p className="text-xs text-muted-foreground">
+                      Providers are sorted with likely <span className="text-primary font-semibold">API / backend</span> hosts
+                      first — those are the ones actually processing requests, as opposed to static-asset CDNs that only serve
+                      files like JS/CSS/images to the browser.
+                    </p>
+                  )}
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {result.pageAnalysis.embeddedProviders.map((provider, i) => {
+                      const typeMeta = {
+                        "api-or-backend": {
+                          label: "API / Backend",
+                          className: "bg-primary/10 text-primary border-primary/50",
+                        },
+                        "static-asset-cdn": {
+                          label: "Static Asset CDN",
+                          className: "bg-secondary text-muted-foreground border-border",
+                        },
+                        unknown: {
+                          label: "Unclassified",
+                          className: "bg-amber-500/10 text-amber-500 border-amber-500/40",
+                        },
+                      }[provider.providerType];
+                      const isBackend = provider.providerType === "api-or-backend";
+                      return (
+                        <div
+                          key={i}
+                          className={`bg-card border p-4 space-y-2 ${isBackend ? "border-primary/40" : "border-border/50"}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className={`font-mono text-base font-bold break-all ${isBackend ? "text-primary" : "text-foreground"}`}
+                            >
+                              {provider.domain}
+                            </span>
+                            <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider shrink-0">
+                              {provider.occurrences}x
+                            </Badge>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={`rounded-none text-[10px] uppercase tracking-wider ${typeMeta.className}`}
+                          >
+                            {typeMeta.label}
+                          </Badge>
+                          <div className="flex flex-wrap gap-1.5">
+                            {provider.sources.map((src, j) => (
+                              <span key={j} className="text-[10px] bg-secondary px-1.5 py-0.5 flex items-center gap-1 font-mono">
+                                <LinkIcon className="w-2.5 h-2.5 text-muted-foreground" />
+                                {src}
+                              </span>
+                            ))}
+                          </div>
+                          {provider.matchedPaths.length > 0 && (
+                            <div className="space-y-1">
+                              {provider.matchedPaths.slice(0, 3).map((p, j) => (
+                                <div
+                                  key={j}
+                                  className="font-mono text-[10px] text-muted-foreground break-all bg-secondary/30 p-2 border border-border/30"
+                                >
+                                  {p}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {provider.sampleContext && (
+                            <div className="font-mono text-[10px] text-muted-foreground break-all bg-secondary/30 p-2 border border-border/30">
+                              {provider.sampleContext}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </>
           )}

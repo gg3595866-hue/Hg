@@ -69,7 +69,9 @@ export const ScanTargetResponse = zod.object({
   "domain": zod.string(),
   "occurrences": zod.number(),
   "sources": zod.array(zod.string()),
-  "sampleContext": zod.string().nullable()
+  "sampleContext": zod.string().nullable(),
+  "providerType": zod.enum(['static-asset-cdn', 'api-or-backend', 'unknown']),
+  "matchedPaths": zod.array(zod.string())
 })),
   "error": zod.string().nullable()
 }),

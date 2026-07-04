@@ -5,10 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EmbeddedProviderProviderType } from './embeddedProviderProviderType';
 
 export interface EmbeddedProvider {
   domain: string;
   occurrences: number;
   sources: string[];
   sampleContext: string | null;
+  providerType: EmbeddedProviderProviderType;
+  matchedPaths: string[];
 }

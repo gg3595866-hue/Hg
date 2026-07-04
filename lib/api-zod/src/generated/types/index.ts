@@ -10,6 +10,7 @@ export * from './candidateOriginIp';
 export * from './candidateOriginIpConfidence';
 export * from './dnsResolverResult';
 export * from './embeddedProvider';
+export * from './embeddedProviderProviderType';
 export * from './healthStatus';
 export * from './ipDetails';
 export * from './originVerifyRequest';
