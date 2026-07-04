@@ -197,6 +197,76 @@ export default function ScanResults({ result }: { result: ScanResult }) {
         </section>
       )}
 
+      {/* Sensitive Endpoint Sweep */}
+      {result.sensitiveEndpoints && result.sensitiveEndpoints.length > 0 && (() => {
+        const found = result.sensitiveEndpoints.filter((e) => e.found);
+        const redirects = found.filter((e) => e.isLoginRedirect);
+        const other = found.filter((e) => !e.isLoginRedirect);
+        if (found.length === 0) return null;
+        return (
+          <section className="space-y-4">
+            <h2 className="text-xl font-bold uppercase tracking-wider border-b border-border pb-2 flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-primary" />
+              Sensitive Endpoint Sweep
+            </h2>
+            <p className="text-xs text-muted-foreground max-w-3xl">
+              Probed {result.sensitiveEndpoints.length} common admin/staff/backend paths on{" "}
+              <span className="font-mono">{result.hostname}</span> and found {found.length} that don't 404.
+            </p>
+
+            {redirects.length > 0 && (
+              <div className="space-y-2">
+                <div className="p-3 bg-amber-500/10 border border-amber-500/40 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" />
+                  <span>
+                    <span className="text-amber-500 font-semibold">{redirects.length} path{redirects.length > 1 ? "s" : ""}</span> returned
+                    a 3xx redirect — most likely bouncing unauthenticated requests to a login page. This confirms the
+                    panel exists and is internet-reachable, which is a misconfiguration signal worth reviewing even
+                    though the content itself isn't exposed.
+                  </span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {redirects.map((endpoint, i) => (
+                    <div key={i} className="bg-card border border-amber-500/30 p-3 flex flex-col gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-sm text-foreground break-all">{endpoint.path}</span>
+                        <Badge
+                          variant="outline"
+                          className="rounded-none text-[10px] uppercase tracking-wider bg-amber-500/10 text-amber-500 border-amber-500/50 shrink-0"
+                        >
+                          {endpoint.statusCode} Redirect
+                        </Badge>
+                      </div>
+                      {endpoint.redirectLocation && (
+                        <span className="font-mono text-[10px] text-muted-foreground break-all">
+                          → {endpoint.redirectLocation}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {other.length > 0 && (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {other.map((endpoint, i) => (
+                  <div key={i} className="bg-card border border-border/50 p-3 flex items-center justify-between gap-2">
+                    <span className="font-mono text-sm text-foreground break-all">{endpoint.path}</span>
+                    <Badge
+                      variant="outline"
+                      className="rounded-none text-[10px] uppercase tracking-wider bg-secondary text-muted-foreground border-border shrink-0"
+                    >
+                      {endpoint.statusCode}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })()}
+
       {/* Edge IP Details */}
       {result.edgeIpDetails && result.edgeIpDetails.length > 0 && (
         <section className="space-y-3">

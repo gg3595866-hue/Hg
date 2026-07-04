@@ -399,6 +399,17 @@ components:
           nullable: true
         found:
           type: boolean
+        isLoginRedirect:
+          type: boolean
+          description: >-
+            True when the endpoint responded with a 3xx redirect (301/302/303/
+            307/308) — a common signal that an admin/staff/backend panel
+            exists and is internet-reachable, but is bouncing unauthenticated
+            requests to a login page rather than rendering content directly.
+        redirectLocation:
+          type: string
+          nullable: true
+          description: The `Location` header value when isLoginRedirect is true.
         error:
           type: string
           nullable: true
@@ -408,6 +419,8 @@ components:
         - reachable
         - statusCode
         - found
+        - isLoginRedirect
+        - redirectLocation
         - error
     EmbeddedProvider:
       type: object

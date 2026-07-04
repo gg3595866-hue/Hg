@@ -168,6 +168,10 @@ export interface SensitiveEndpointProbe {
   reachable: boolean;
   statusCode: number | null;
   found: boolean;
+  /** True when the endpoint responded with a 3xx redirect (301/302/303/ 307/308) — a common signal that an admin/staff/backend panel exists and is internet-reachable, but is bouncing unauthenticated requests to a login page rather than rendering content directly. */
+  isLoginRedirect: boolean;
+  /** The `Location` header value when isLoginRedirect is true. */
+  redirectLocation: string | null;
   error: string | null;
 }
 

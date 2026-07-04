@@ -313,11 +313,29 @@ const SENSITIVE_ENDPOINT_PATHS = [
   "/internal",
 ];
 
+// 3xx codes that mean "this path exists and the server chose to redirect the
+// request" — most commonly to a login page. Seeing this on an admin/staff/
+// backend path is a distinct misconfiguration signal worth surfacing on its
+// own: it confirms the panel exists and is internet-reachable, even though
+// it isn't rendering its content directly to an unauthenticated GET.
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+
+type SensitiveEndpointProbeResult = {
+  path: string;
+  url: string;
+  reachable: boolean;
+  statusCode: number | null;
+  found: boolean;
+  isLoginRedirect: boolean;
+  redirectLocation: string | null;
+  error: string | null;
+};
+
 async function probeEndpoint(
   hostname: string,
   useHttps: boolean,
   path: string,
-): Promise<{ path: string; url: string; reachable: boolean; statusCode: number | null; found: boolean; error: string | null }> {
+): Promise<SensitiveEndpointProbeResult> {
   const url = `${useHttps ? "https" : "http"}://${hostname}${path}`;
   try {
     const res = await fetch(url, {
@@ -327,7 +345,18 @@ async function probeEndpoint(
       signal: AbortSignal.timeout(5000),
     });
     const found = res.status !== 404 && res.status < 500;
-    return { path, url, reachable: true, statusCode: res.status, found, error: null };
+    const isLoginRedirect = REDIRECT_STATUS_CODES.has(res.status);
+    const redirectLocation = isLoginRedirect ? res.headers.get("location") : null;
+    return {
+      path,
+      url,
+      reachable: true,
+      statusCode: res.status,
+      found,
+      isLoginRedirect,
+      redirectLocation,
+      error: null,
+    };
   } catch (err) {
     return {
       path,
@@ -335,6 +364,8 @@ async function probeEndpoint(
       reachable: false,
       statusCode: null,
       found: false,
+      isLoginRedirect: false,
+      redirectLocation: null,
       error: err instanceof Error ? err.message : "Request failed",
     };
   }
@@ -343,9 +374,7 @@ async function probeEndpoint(
 async function probeSensitiveEndpoints(
   hostname: string,
   useHttps: boolean,
-): Promise<
-  { path: string; url: string; reachable: boolean; statusCode: number | null; found: boolean; error: string | null }[]
-> {
+): Promise<SensitiveEndpointProbeResult[]> {
   const results = await Promise.all(
     SENSITIVE_ENDPOINT_PATHS.map((path) => probeEndpoint(hostname, useHttps, path)),
   );

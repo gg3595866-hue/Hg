@@ -82,6 +82,8 @@ export const ScanTargetResponse = zod.object({
   "reachable": zod.boolean(),
   "statusCode": zod.number().nullable(),
   "found": zod.boolean(),
+  "isLoginRedirect": zod.boolean().describe('True when the endpoint responded with a 3xx redirect (301\/302\/303\/ 307\/308) — a common signal that an admin\/staff\/backend panel exists and is internet-reachable, but is bouncing unauthenticated requests to a login page rather than rendering content directly.'),
+  "redirectLocation": zod.string().nullable().describe('The `Location` header value when isLoginRedirect is true.'),
   "error": zod.string().nullable()
 })).optional(),
   "scannedAt": zod.string()
