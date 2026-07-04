@@ -365,7 +365,62 @@ export type TargetDetails = {
   hostname: string;
   path: string;
   useHttps: boolean;
+  headers: Record<string, string>;
 };
+
+// Headers that are unsafe or meaningless to replay verbatim from a pasted
+// snippet (either browser-managed, or would break the outbound request).
+const UNSAFE_REPLAY_HEADERS = new Set([
+  "host",
+  "content-length",
+  "connection",
+  "origin",
+  "sec-fetch-site",
+  "sec-fetch-mode",
+  "sec-fetch-dest",
+]);
+
+function extractHeadersFromObjectLiteral(headersSource: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const pairRegex = /["']?([a-zA-Z0-9-]+)["']?\s*:\s*["']((?:\\.|[^"'\\])*)["']/g;
+  let match: RegExpExecArray | null;
+  while ((match = pairRegex.exec(headersSource)) !== null) {
+    const key = match[1].toLowerCase();
+    if (UNSAFE_REPLAY_HEADERS.has(key)) continue;
+    headers[match[1]] = match[2].replace(/\\(.)/g, "$1");
+  }
+  return headers;
+}
+
+function extractHeadersFromRawHttp(input: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const lines = input.split(/\r?\n/).slice(1);
+  for (const line of lines) {
+    if (!line.trim()) break;
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (!key || UNSAFE_REPLAY_HEADERS.has(key.toLowerCase())) continue;
+    headers[key] = value;
+  }
+  return headers;
+}
+
+function extractHeadersFromCurl(input: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const headerFlagRegex = /(?:-H|--header)\s+["']([^"']+)["']/g;
+  let match: RegExpExecArray | null;
+  while ((match = headerFlagRegex.exec(input)) !== null) {
+    const idx = match[1].indexOf(":");
+    if (idx === -1) continue;
+    const key = match[1].slice(0, idx).trim();
+    const value = match[1].slice(idx + 1).trim();
+    if (!key || UNSAFE_REPLAY_HEADERS.has(key.toLowerCase())) continue;
+    headers[key] = value;
+  }
+  return headers;
+}
 
 /**
  * Extracts both the hostname AND the request path/query from the raw input.
@@ -398,7 +453,27 @@ export function extractTargetDetails(rawInput: string): TargetDetails {
       hostname: hostname.toLowerCase(),
       path: requestTarget.startsWith("/") ? requestTarget : `/${requestTarget}`,
       useHttps: true,
+      headers: extractHeadersFromRawHttp(input),
     };
+  }
+
+  if (/^curl\s/i.test(input)) {
+    const urlMatch = input.match(/curl\s+(?:-\S+\s+\S+\s+)*["']?(https?:\/\/[^\s"']+)["']?/i);
+    if (urlMatch && urlMatch[1]) {
+      try {
+        const url = new URL(urlMatch[1]);
+        if (url.hostname) {
+          return {
+            hostname: url.hostname.toLowerCase(),
+            path: `${url.pathname}${url.search}` || "/",
+            useHttps: url.protocol === "https:",
+            headers: extractHeadersFromCurl(input),
+          };
+        }
+      } catch {
+        // fall through to generic parsing below
+      }
+    }
   }
 
   // JS fetch()/axios/curl-style snippets: pull the first quoted http(s) URL out of the blob.
@@ -409,10 +484,20 @@ export function extractTargetDetails(rawInput: string): TargetDetails {
       try {
         const url = new URL(urlMatch[1]);
         if (url.hostname) {
+          // Pull out the `headers: { ... }` object literal (if any) that
+          // typically follows the URL in a fetch() call copied from DevTools,
+          // so auth/session headers actually get replayed on the real fetch
+          // instead of being silently dropped.
+          let headers: Record<string, string> = {};
+          const headersBlockMatch = input.match(/headers["']?\s*:\s*\{([^}]*)\}/is);
+          if (headersBlockMatch && headersBlockMatch[1]) {
+            headers = extractHeadersFromObjectLiteral(headersBlockMatch[1]);
+          }
           return {
             hostname: url.hostname.toLowerCase(),
             path: `${url.pathname}${url.search}` || "/",
             useHttps: url.protocol === "https:",
+            headers,
           };
         }
       } catch {
@@ -435,6 +520,7 @@ export function extractTargetDetails(rawInput: string): TargetDetails {
       hostname: url.hostname.toLowerCase(),
       path: `${url.pathname}${url.search}` || "/",
       useHttps: url.protocol === "https:",
+      headers: {},
     };
   } catch {
     throw new Error(
@@ -1325,6 +1411,7 @@ export async function analyzePageForEmbeddedProviders(
   hostname: string,
   path: string,
   useHttps: boolean,
+  customHeaders: Record<string, string> = {},
 ): Promise<{
   fetchedUrl: string;
   reachable: boolean;
@@ -1342,11 +1429,13 @@ export async function analyzePageForEmbeddedProviders(
     providerType: "static-asset-cdn" | "api-or-backend" | "unknown";
     matchedPaths: string[];
   }[];
+  requestHeadersApplied: string[];
   error: string | null;
 }> {
   const scheme = useHttps ? "https" : "http";
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const fetchedUrl = `${scheme}://${hostname}${normalizedPath}`;
+  const requestHeadersApplied = Object.keys(customHeaders);
 
   try {
     const res = await fetch(fetchedUrl, {
@@ -1355,6 +1444,11 @@ export async function analyzePageForEmbeddedProviders(
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         Accept: "*/*",
+        // Custom headers extracted from a pasted fetch()/curl/raw-HTTP snippet
+        // (e.g. an `x-auth`/`Authorization` bearer token) are replayed here —
+        // without this, authenticated API/game-backend endpoints just 401 and
+        // reveal nothing, even though the user supplied valid credentials.
+        ...customHeaders,
       },
       redirect: "follow",
       signal: AbortSignal.timeout(8000),
@@ -1477,6 +1571,7 @@ export async function analyzePageForEmbeddedProviders(
       viaHeader,
       setCookieDomains: Array.from(setCookieDomains),
       embeddedProviders,
+      requestHeadersApplied,
       error: null,
     };
   } catch (err) {
@@ -1490,13 +1585,14 @@ export async function analyzePageForEmbeddedProviders(
       viaHeader: null,
       setCookieDomains: [],
       embeddedProviders: [],
+      requestHeadersApplied,
       error: err instanceof Error ? err.message : "Failed to fetch the requested path.",
     };
   }
 }
 
 export async function scanTarget(rawInput: string): Promise<ScanResult> {
-  const { hostname, path, useHttps: requestedUseHttps } = extractTargetDetails(rawInput);
+  const { hostname, path, useHttps: requestedUseHttps, headers: requestedHeaders } = extractTargetDetails(rawInput);
 
   const [dnsResults, sslCertificate, mxRecords, mxHosts, txtRecords, cnames, crtShHosts, certSpotterHosts] =
     await Promise.all([
@@ -1517,7 +1613,7 @@ export async function scanTarget(rawInput: string): Promise<ScanResult> {
   const useHttpsForProbes = !sslCertificate.error;
   const [sensitiveEndpoints, pageAnalysis] = await Promise.all([
     probeSensitiveEndpoints(hostname, useHttpsForProbes),
-    analyzePageForEmbeddedProviders(hostname, path, requestedUseHttps),
+    analyzePageForEmbeddedProviders(hostname, path, requestedUseHttps, requestedHeaders),
   ]);
 
   const bruteForceHosts = COMMON_SUBDOMAIN_WORDLIST.map((word) => `${word}.${hostname}`);

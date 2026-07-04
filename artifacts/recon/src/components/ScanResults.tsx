@@ -65,6 +65,19 @@ export default function ScanResults({ result }: { result: ScanResult }) {
             </div>
           ) : (
             <>
+              {result.pageAnalysis.requestHeadersApplied.length > 0 && (
+                <div className="p-3 bg-primary/10 border border-primary/40 text-xs flex items-start gap-2">
+                  <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-primary" />
+                  <span>
+                    Forwarded custom header{result.pageAnalysis.requestHeadersApplied.length > 1 ? "s" : ""} from your
+                    pasted request:{" "}
+                    <span className="font-mono text-primary">
+                      {result.pageAnalysis.requestHeadersApplied.join(", ")}
+                    </span>{" "}
+                    (values are used, never displayed).
+                  </span>
+                </div>
+              )}
               <div className="bg-card border border-border p-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                 <div>
                   <div className="text-muted-foreground uppercase tracking-wider mb-1">Status</div>

@@ -199,6 +199,8 @@ export interface PageAnalysis {
   viaHeader: string | null;
   setCookieDomains: string[];
   embeddedProviders: EmbeddedProvider[];
+  /** Names (not values) of custom headers extracted from the pasted fetch()/curl/raw-HTTP snippet and forwarded on the analysis request, so the UI can confirm e.g. an auth token was replayed without echoing the sensitive value back. */
+  requestHeadersApplied: string[];
   error: string | null;
 }
 

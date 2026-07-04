@@ -73,6 +73,7 @@ export const ScanTargetResponse = zod.object({
   "providerType": zod.enum(['static-asset-cdn', 'api-or-backend', 'unknown']),
   "matchedPaths": zod.array(zod.string())
 })),
+  "requestHeadersApplied": zod.array(zod.string()).describe('Names (not values) of custom headers extracted from the pasted fetch()\/curl\/raw-HTTP snippet and forwarded on the analysis request, so the UI can confirm e.g. an auth token was replayed without echoing the sensitive value back.'),
   "error": zod.string().nullable()
 }),
   "sensitiveEndpoints": zod.array(zod.object({

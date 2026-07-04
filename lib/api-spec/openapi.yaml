@@ -470,6 +470,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EmbeddedProvider"
+        requestHeadersApplied:
+          type: array
+          items:
+            type: string
+          description: >-
+            Names (not values) of custom headers extracted from the pasted
+            fetch()/curl/raw-HTTP snippet and forwarded on the analysis
+            request, so the UI can confirm e.g. an auth token was replayed
+            without echoing the sensitive value back.
         error:
           type: string
           nullable: true
@@ -483,6 +492,7 @@ components:
         - viaHeader
         - setCookieDomains
         - embeddedProviders
+        - requestHeadersApplied
         - error
     ScanResult:
       type: object
